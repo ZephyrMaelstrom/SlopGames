@@ -1,0 +1,54 @@
+{
+  "version": 1,
+  "updated": "2026-10-04",
+  "games": [
+    {
+      "id": "pop-rush",
+      "title": "Pop Rush",
+      "description": "Tap bubbles, dodge bombs and chain combos before the 30-second clock runs out.",
+      "genre": "arcade",
+      "tags": [
+        "arcade",
+        "tap",
+        "casual",
+        "score-attack"
+      ],
+      "orientation": "portrait",
+      "theme": "candy",
+      "color": "#8a6cff",
+      "thumb": "games/pop-rush/thumb.jpg",
+      "kernel": "1.1.0",
+      "version": "1.1.0",
+      "author": "SlopGames",
+      "added": "2026-10-04",
+      "featured": true,
+      "status": "live",
+      "sizeKB": 148
+    },
+    {
+      "id": "kernel-playground",
+      "title": "Kernel Playground",
+      "description": "Five mini-games in one: platformer, peg sling, match-3, swarm defense and a widget/shop gallery. Exercises every kernel system.",
+      "genre": "showcase",
+      "tags": [
+        "platformer",
+        "physics",
+        "puzzle",
+        "match-3",
+        "tower-defense",
+        "showcase"
+      ],
+      "orientation": "portrait",
+      "theme": "candy",
+      "color": "#2fbf4a",
+      "thumb": "games/kernel-playground/thumb.jpg",
+      "kernel": "1.1.0",
+      "version": "1.0.0",
+      "author": "SlopGames",
+      "added": "2026-10-04",
+      "featured": false,
+      "status": "lab",
+      "sizeKB": 180
+    }
+  ]
+}

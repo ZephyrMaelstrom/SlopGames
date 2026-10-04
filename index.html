@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>SlopGames — free AI-made browser games</title>
+<meta name="description" content="Play free browser games made with AI — and make your own. Instant play on phone and desktop, no downloads.">
+<meta name="theme-color" content="#0c0b1d">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%23ffc21a'/%3E%3Cstop offset='.55' stop-color='%23ff5cb4'/%3E%3Cstop offset='1' stop-color='%238f5bff'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='64' height='64' rx='18' fill='url(%23g)'/%3E%3Cpath d='M24 18v28l22-14z' fill='%231b1b3a'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="platform/style.css">
+</head>
+<body>
+<header class="top">
+  <button class="burger icon-btn" id="burger" aria-label="Menu"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button>
+  <a class="logo" href="#/"><span class="mark">▶</span><span>Slop<b>Games</b></span></a>
+  <div class="search">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg>
+    <input id="q" type="search" placeholder="Search games  ( / )" autocomplete="off">
+  </div>
+  <nav>
+    <a href="#/create" data-r="create"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linejoin="round"><path d="M12 3l2.2 5.8L20 11l-5.8 2.2L12 19l-2.2-5.8L4 11l5.8-2.2z"/></svg><span>Create</span></a>
+    <a href="#/lab" data-r="lab"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3h6M10 3v6L4 19a1.5 1.5 0 001.3 2h13.4A1.5 1.5 0 0020 19l-6-10V3"/><path d="M7 15h10"/></svg><span>Lab</span></a>
+  </nav>
+  <span class="chip-credits" title="Generation credits (ledger not wired yet)">⚡ dev credits</span>
+  <button class="icon-btn" id="settings" aria-label="Settings"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/></svg></button>
+</header>
+<aside class="side" id="side"></aside>
+<main><div class="view" id="view"><div class="empty">Loading…</div></div></main>
+<div id="toasts"></div>
+<script src="platform/validate.js"></script>
+<script src="platform/host.js"></script>
+<script src="platform/db.js"></script>
+<script src="platform/prompt.js"></script>
+<script src="platform/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Kernel Unit Tests</title>
+<style>
+  html{overflow:auto!important;height:auto!important;touch-action:auto!important}
+  body{margin:0;font:14px/1.45 ui-monospace,Menlo,Consolas,monospace;background:#0f0f1e;color:#e7e7f5;overflow:auto!important;height:auto!important}
+  header{padding:14px 18px;background:#17172b;border-bottom:1px solid #2a2a45;display:flex;gap:12px;align-items:center;position:sticky;top:0}
+  h1{font:800 16px system-ui;margin:0}
+  .sum{margin-left:auto;font-weight:700}
+  .ok{color:#5ef08a}.bad{color:#ff6b7d}
+  ul{list-style:none;margin:0;padding:10px 18px}
+  li{padding:3px 0;border-bottom:1px solid #1d1d33}
+  li small{color:#8b8bab}
+  .grp{margin-top:12px;color:#b9a4ff;font-weight:700}
+  #stage{display:none!important}
+</style>
+</head>
+<body>
+<header><h1>Kernel unit tests</h1><span id="ver"></span><span class="sum" id="sum">running…</span></header>
+<ul id="out"></ul>
+<canvas id="stage"></canvas>
+<script>
+  const MANIFEST = { id: 'kernel-tests', title: 'Kernel Tests', design: { w: 720, h: 1280 }, keys: {}, touch: { stick: false, buttons: [] }, platformOrigins: [] };
+  const ver = new URLSearchParams(location.search).get('k') || '1.1.0';
+  document.getElementById('ver').textContent = 'v' + ver;
+  const s = document.createElement('script');
+  s.src = '../kernel/kernel-' + ver + '.js';
+  s.onload = run;
+  s.onerror = () => { document.getElementById('sum').textContent = 'kernel ' + ver + ' failed to load'; window.__results = { pass: 0, fail: 1, failures: ['load'] }; };
+  document.body.appendChild(s);
+
+  function run() {
+    const out = document.getElementById('out');
+    let pass = 0, fail = 0; const failures = [];
+    const group = n => { const li = document.createElement('li'); li.className = 'grp'; li.textContent = n; out.appendChild(li); };
+    const t = (name, fn) => {
+      let ok = false, msg = '';
+      try { const r = fn(); ok = r === undefined ? true : !!r; if (!ok) msg = 'returned ' + JSON.stringify(r); } catch (e) { msg = e.message; }
+      ok ? pass++ : (fail++, failures.push(name + ' — ' + msg));
+      const li = document.createElement('li');
+      li.innerHTML = `<span class="${ok ? 'ok' : 'bad'}">${ok ? '✔' : '✘'}</span> ${name} ${msg ? '<small>' + msg + '</small>' : ''}`;
+      out.appendChild(li);
+    };
+    const near = (a, b, e = 1e-6) => Math.abs(a - b) <= e;
+    const eq = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+    const has = n => typeof K[n] !== 'undefined';
+
+    group('core');
+    t('K exposes version', () => typeof K.VERSION === 'string');
+    t('rng is deterministic', () => { const a = K.rng(42), b = K.rng(42); for (let i = 0; i < 100; i++) if (a() !== b()) return false; return true; });
+    t('rng range/int bounds', () => { const r = K.rng(7); for (let i = 0; i < 1000; i++) { const v = r.int(2, 5); if (v < 2 || v > 5) return false; } return true; });
+    t('hashSeed stable', () => K.hashSeed('abc') === K.hashSeed('abc') && K.hashSeed('abc') !== K.hashSeed('abd'));
+    t('M.clamp/lerp/damp', () => K.M.clamp(5, 0, 3) === 3 && K.M.lerp(0, 10, 0.5) === 5 && near(K.M.damp(0, 10, 1e9, 1), 10));
+    t('M.angleDiff wraps', () => !K.M.angleDiff || near(K.M.angleDiff(0.1, Math.PI * 2 - 0.1), -0.2, 1e-9));
+
+    if (!has('Grid')) { document.getElementById('sum').textContent = `${pass} passed (kernel ${K.VERSION} has no 1.1 modules)`; window.__results = { pass, fail, failures }; return; }
+
+    t('rng.shuffle is permutation', () => { const a = K.rng(3).shuffle([1, 2, 3, 4, 5, 6]); return eq([...a].sort(), [1, 2, 3, 4, 5, 6]); });
+    t('rng.weighted picks', () => { const r = K.rng(1); const c = { a: 0, b: 0 }; for (let i = 0; i < 2000; i++) c[r.weighted([{ k: 'a', w: 9 }, { k: 'b', w: 1 }]).k]++; return c.a > c.b * 5; });
+    t('noise deterministic & bounded', () => { const a = K.noise(5), b = K.noise(5); for (let i = 0; i < 200; i++) { const x = i * 0.37, y = i * 0.11; const v = a.fbm2(x, y); if (v !== b.fbm2(x, y) || v < -1 || v > 1) return false; } return true; });
+    t('fmt / fmtTime', () => K.fmt(999) === '999' && K.fmt(1500) === '1.50K' && K.fmt(2.5e6) === '2.50M' && K.fmtTime(75) === '1:15');
+    t('color.mix/shade', () => K.color.mix('#000000', '#ffffff', 0.5) === '#808080' && K.color.shade('#000000', 1) === '#ffffff');
+    t('compact in place', () => { const a = [1, 2, 3, 4]; K.compact(a, v => v % 2 === 0); return eq(a, [2, 4]); });
+    t('fsm transitions', () => { let log = []; const m = K.fsm({ a: { enter() { log.push('a'); }, update(dt, tt) { if (tt > 0.1) m.go('b'); } }, b: { enter() { log.push('b'); } } }, 'a'); for (let i = 0; i < 10; i++) m.update(1 / 60); return eq(log, ['a', 'b']) && m.is('b'); });
+
+    group('collision');
+    const C = K.col;
+    t('circleCircleHit normal', () => { const h = C.circleCircleHit(0, 0, 10, 15, 0, 10); return h && near(h.nx, -1) && near(h.depth, 5); });
+    t('circleRectHit outside', () => { const h = C.circleRectHit(-5, 50, 10, 0, 0, 100, 100); return h && near(h.nx, -1) && near(h.depth, 5); });
+    t('circleRectHit center inside', () => { const h = C.circleRectHit(50, 2, 10, 0, 0, 100, 100); return h && h.ny === -1; });
+    t('rectRectHit min axis', () => { const h = C.rectRectHit(0, 0, 10, 10, 8, 2, 10, 10); return h && h.nx === -1 && near(h.depth, 2); });
+    t('circleSegHit', () => { const h = C.circleSegHit(5, 8, 10, 0, 0, 10, 0); return h && near(h.ny, 1) && near(h.depth, 2); });
+    t('segSeg intersection', () => { const h = C.segSeg(0, 0, 10, 10, 0, 10, 10, 0); return h && near(h.x, 5) && near(h.y, 5); });
+    t('rayCircle', () => near(C.rayCircle(0, 0, 1, 0, 10, 0, 2), 8));
+    t('rayRect', () => near(C.rayRect(0, 5, 1, 0, 10, 0, 5, 10), 10) && C.rayRect(0, 50, 1, 0, 10, 0, 5, 10) === null);
+    t('pointInPoly', () => C.pointInPoly(5, 5, [0, 0, 10, 0, 10, 10, 0, 10]) && !C.pointInPoly(15, 5, [0, 0, 10, 0, 10, 10, 0, 10]));
+    t('reflect', () => { const r = C.reflect(1, 1, 0, -1, 1); return near(r.x, 1) && near(r.y, -1); });
+    t('SpatialHash query dedupes', () => { const h = new K.SpatialHash(10); const o = { n: 1 }; h.insert(o, 5, 5, 20); h.insert({ n: 2 }, 500, 500, 1); const r = h.query(5, 5, 30); return r.length === 1 && r[0] === o; });
+
+    group('grid / path');
+    t('Grid matches runs', () => { const g = new K.Grid(5, 3, null); [1, 1, 1].forEach((v, x) => g.set(x, 0, 2)); g.set(4, 0, 2); g.set(4, 1, 2); g.set(4, 2, 2); const m = g.matches(3); return m.runs.length === 2 && m.cells.size === 6; });
+    t('Grid matches ignores null', () => { const g = new K.Grid(4, 1, null); return g.matches(3).runs.length === 0; });
+    t('Grid collapse moves', () => { const g = new K.Grid(1, 4, null); g.set(0, 0, 'a'); g.set(0, 2, 'b'); const mv = g.collapse(null); return g.get(0, 3) === 'b' && g.get(0, 2) === 'a' && g.get(0, 0) === null && mv.length === 2; });
+    t('Grid flood', () => { const g = new K.Grid(3, 3, 1); g.set(1, 1, 0); return g.flood(0, 0, v => v === 1).length === 8; });
+    t('Grid rotate', () => { const g = new K.Grid(2, 1, null); g.set(0, 0, 'a'); g.set(1, 0, 'b'); const r = g.rotate(true); return r.w === 1 && r.h === 2 && r.get(0, 0) === 'a' && r.get(0, 1) === 'b'; });
+    const maze = ['.....', '.###.', '...#.', '.#...'];
+    const pass_ = (x, y) => maze[y] && maze[y][x] === '.';
+    t('astar finds shortest', () => { const p = K.path.astar(5, 4, pass_, 0, 0, 4, 3); return p && p.length === 8 && eq(p[0], [0, 0]) && eq(p[p.length - 1], [4, 3]); });
+    t('astar blocked → null', () => K.path.astar(3, 1, (x) => x !== 1, 0, 0, 2, 0) === null);
+    t('astar diag no corner cut', () => { const p = K.path.astar(2, 2, (x, y) => !(x === 1 && y === 0), 0, 0, 1, 1, { diag: true }); return p && p.length === 3; });
+    t('flowfield distances', () => { const f = K.path.flowfield(5, 4, pass_, [[4, 3]]); return f.at(4, 3) === 0 && f.at(0, 0) === 7 && f.at(1, 1) === Infinity; });
+    t('flowfield next steps downhill', () => { const f = K.path.flowfield(5, 4, pass_, [[4, 3]]); let x = 0, y = 0; for (let i = 0; i < 20 && f.at(x, y) > 0; i++) { const [dx, dy] = f.next(x, y); x += dx; y += dy; } return x === 4 && y === 3; });
+    t('los', () => K.path.los(0, 0, 4, 0, pass_) && !K.path.los(0, 1, 4, 1, pass_));
+
+    group('tilemap');
+    const tm = new K.Tilemap({ size: 10, rows: ['#....#', '#....#', '#.--.#', '#....#', '######'] });
+    t('tilemap get/solid/edge', () => tm.solid(0, 0) && !tm.solid(1, 0) && tm.solid(-1, 2) && tm.info('-').oneWay);
+    t('body lands on ground', () => { const b = { x: 15, y: 5, w: 8, h: 8, vx: 0, vy: 0 }; for (let i = 0; i < 120; i++) { b.vy += 600 / 60; tm.move(b, 1 / 60); } return b.onGround && near(b.y + b.h / 2, 40, 0.01); });
+    t('one-way platform holds from above', () => { const b = { x: 25, y: 5, w: 6, h: 6, vx: 0, vy: 0 }; for (let i = 0; i < 60; i++) { b.vy += 600 / 60; tm.move(b, 1 / 60); } return b.onGround && near(b.y + b.h / 2, 20, 0.01); });
+    t('one-way passes from below', () => { const b = { x: 25, y: 35, w: 6, h: 6, vx: 0, vy: -400 }; tm.move(b, 1 / 60); tm.move(b, 1 / 60); return b.y < 32 && !b.onCeil; });
+    t('wall stops horizontal', () => { const b = { x: 40, y: 35, w: 8, h: 8, vx: 900, vy: 0 }; for (let i = 0; i < 30; i++) tm.move(b, 1 / 60); b.vx = 0; tm.move(b, 1 / 60); return b.onWall === 1 && near(b.x + b.w / 2, 50, 0.01); });
+    t('raycast hits wall', () => { const h = tm.raycast(15, 15, 1, 0); return h && h.tx === 5 && near(h.x, 50, 1e-6); });
+    t('tilemap find', () => tm.find('-').length === 2);
+
+    group('physics');
+    t('ball rests on floor', () => { const w = new K.Physics({ gravity: [0, 1000] }); w.addBox(0, 100, 200, 20); const b = w.addCircle({ x: 100, y: 0, r: 10, restitution: 0.2 }); for (let i = 0; i < 300; i++) w.step(1 / 60); return near(b.y, 90, 1.5) && Math.abs(b.vy) < 5; });
+    t('restitution bounces', () => { const w = new K.Physics({ gravity: [0, 1000] }); w.addSegment(0, 100, 200, 100, { restitution: 0.9 }); const b = w.addCircle({ x: 100, y: 0, r: 10, restitution: 0.9 }); let up = false; for (let i = 0; i < 120; i++) { w.step(1 / 60); if (b.vy < -200) up = true; } return up; });
+    t('no tunneling at high speed', () => { const w = new K.Physics({ gravity: [0, 0] }); w.addBox(100, -50, 10, 100); const b = w.addCircle({ x: 0, y: 0, r: 5, vx: 20000 }); for (let i = 0; i < 10; i++) w.step(1 / 60); return b.x < 100; });
+    t('circles separate', () => { const w = new K.Physics({ gravity: [0, 0] }); const a = w.addCircle({ x: 0, y: 0, r: 10 }), b = w.addCircle({ x: 5, y: 0, r: 10 }); w.step(1 / 60); return K.M.dist(a.x, a.y, b.x, b.y) >= 19.5; });
+    t('rope joint holds length', () => { const w = new K.Physics({ gravity: [0, 1000] }); const b = w.addCircle({ x: 100, y: 0, r: 5 }); w.addJoint(b, { x: 0, y: 0 }, { len: 100, rope: true }); for (let i = 0; i < 240; i++) w.step(1 / 60); return K.M.dist(b.x, b.y, 0, 0) <= 102; });
+    t('sensor reports contact without response', () => { const w = new K.Physics({ gravity: [0, 0] }); w.addBox(0, 0, 100, 100, { sensor: true }); const b = w.addCircle({ x: 50, y: 50, r: 5, vx: 10 }); w.step(1 / 60); return w.contacts.some(c => c.sensor) && b.vx === 10; });
+    t('physics deterministic', () => { const run = () => { const w = new K.Physics({ gravity: [0, 900] }); w.addBox(0, 300, 400, 20); for (let i = 0; i < 20; i++) w.addCircle({ x: 50 + i * 15, y: i * 7, r: 8 }); for (let i = 0; i < 200; i++) w.step(1 / 60); return w.bodies.map(b => b.x.toFixed(6) + ',' + b.y.toFixed(6)).join(';'); }; return run() === run(); });
+    t('predict returns path', () => { const w = new K.Physics({ gravity: [0, 1000] }); return w.predict(0, 0, 100, -100, 10).length === 20; });
+
+    group('save / meta');
+    t('save defaults + migrate', () => {
+      K.store.set('save', { _v: 1, coins: 5 });
+      const d = K.save.define({ version: 2, defaults: { coins: 0, gems: 0, opts: { music: true } }, migrate: { 2: d => { d.gems = d.coins * 2; return d; } } });
+      return d.coins === 5 && d.gems === 10 && d.opts.music === true && d._v === 2;
+    });
+    t('save reload mutates in place', () => { const ref = K.save.data; K.store.set('save', { _v: 2, coins: 99 }); K.save.reload(); return ref === K.save.data && ref.coins === 99 && ref.gems === 0; });
+    t('wallet add/spend', () => { K.meta.wallet.add('coins', 100); return K.meta.wallet.spend('coins', 60) && !K.meta.wallet.spend('coins', 60) && K.meta.wallet.get('coins') === 40; });
+    t('upgrades cost/buy/max', () => { K.meta.upgrades.define({ spd: { max: 2, base: 10, growth: 2 } }); K.meta.wallet.add('coins', 1000); return K.meta.upgrades.cost('spd') === 10 && K.meta.upgrades.buy('spd') && K.meta.upgrades.cost('spd') === 20 && K.meta.upgrades.buy('spd') && !K.meta.upgrades.buy('spd') && K.meta.upgrades.isMax('spd'); });
+    t('levels stars/unlock', () => { K.meta.levels.complete(0, 2, 100); K.meta.levels.complete(0, 1, 50); return K.meta.levels.stars(0) === 2 && K.meta.levels.best(0) === 100 && K.meta.levels.unlocked(1) && !K.meta.levels.unlocked(2); });
+    t('daily claim once', () => { const a = K.meta.daily.claim(); const b = K.meta.daily.claim(); return a >= 1 && b === 0 && !K.meta.daily.status().available; });
+    t('unlocks', () => K.meta.unlocks.grant('hat') && !K.meta.unlocks.grant('hat') && K.meta.unlocks.has('hat'));
+
+    group('ui / themes / music');
+    t('themes share color keys', () => { const keys = Object.keys(K.THEMES.candy.colors).join(); return Object.values(K.THEMES).every(th => Object.keys(th.colors).join() === keys); });
+    t('setTheme swaps palette', () => { K.setTheme('neon'); const ok = K.THEME.name === 'neon' && K.THEME.glow; K.setTheme('candy'); return ok && !K.THEME.glow; });
+    t('music note freq', () => near(K.music.freq('A4'), 440) && near(K.music.freq('C4'), 261.6256, 1e-3));
+    t('music songs parse', () => Object.values(K.music.songs).every(s => s.bpm && s.tracks.every(tr => tr.p.trim().split(/\s+/).length > 0)));
+    t('wrap splits lines', () => K.draw.wrap('the quick brown fox jumps over the lazy dog', 200, 34).length > 1);
+    t('widgets construct', () => { const b = K.ui.button({ label: 'x' }), tg = K.ui.toggle({}), sl = K.ui.slider({}), tb = K.ui.tabs({ items: ['a', 'b'] }), l = K.ui.list({ items: [1, 2, 3] }); [b, tg, sl, tb, l].forEach(w => K.ui.remove(w)); return true; });
+
+    const sum = document.getElementById('sum');
+    sum.textContent = `${pass} passed · ${fail} failed`;
+    sum.className = 'sum ' + (fail ? 'bad' : 'ok');
+    window.__results = { pass, fail, failures, version: K.VERSION };
+    if (window.parent !== window) window.parent.postMessage({ __kernelTests: true, pass, fail, failures, version: K.VERSION }, '*');
+  }
+</script>
+</body>
+</html>

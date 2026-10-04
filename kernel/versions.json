@@ -1,0 +1,17 @@
+{
+  "latest": "1.1.0",
+  "versions": [
+    {
+      "version": "1.1.0",
+      "date": "2026-10-04",
+      "status": "stable",
+      "notes": "Genre-complete release: camera, collision, spatial hash, circle physics + joints, tilemaps, grid/A*/flowfield, noise, sprite cache, UI widgets (toggle, slider, tabs, scroll list, dialog, toast), music sequencer, save migrations, meta-progression (wallet, upgrades, levels, daily, unlocks), gamepad, multitouch, typed text, 7 themes, per-scene touch overlays, crash overlay + error reporting, snapshot API, adaptive resolution."
+    },
+    {
+      "version": "1.0.0",
+      "date": "2026-10-04",
+      "status": "legacy",
+      "notes": "First kernel: fixed-step loop, input, UI buttons, procedural SFX, fx, scenes, SDK bridge, storage, ads."
+    }
+  ]
+}
