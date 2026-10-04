@@ -49,6 +49,29 @@
       "featured": false,
       "status": "lab",
       "sizeKB": 180
+    },
+    {
+      "id": "piratepinball",
+      "title": "PiratePinball",
+      "description": "Pirate pinball: blast powder kegs, sink enemy ships, battle the Kraken and raid Davy Jones' Locker.",
+      "genre": "pinball",
+      "tags": [
+        "pinball",
+        "physics",
+        "arcade",
+        "pirate"
+      ],
+      "orientation": "portrait",
+      "theme": "ocean",
+      "color": "#1572b3",
+      "thumb": "games/piratepinball/thumb.jpg",
+      "kernel": "1.1.0",
+      "version": "1.0.0",
+      "author": "SlopGames",
+      "added": "2026-10-04",
+      "featured": false,
+      "status": "lab",
+      "sizeKB": 235
     }
   ]
 }
