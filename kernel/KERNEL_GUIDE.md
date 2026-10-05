@@ -15,6 +15,7 @@ A game is ONE `index.html` with three `<script>` blocks: **§1 MANIFEST**, **§2
 ```js
 const MANIFEST = {
   id: 'my-game', title: 'My Game', version: '1.0.0',
+  genre: 'arcade',                  // platform genre id from the prompt — keep it as given
   theme: 'candy',                    // candy | neon | pastel | jungle | ocean | retro | ink
   orientation: 'portrait',           // portrait | landscape | any  (shows a rotate prompt on phones if wrong)
   design: { w: 720, h: 1280, maxW: 900 },   // landscape: { w: 1280, h: 720, maxH: 900 }

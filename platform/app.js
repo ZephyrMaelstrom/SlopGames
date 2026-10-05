@@ -113,6 +113,7 @@
     $('#side').innerHTML = `
       <a href="#/" data-r="home"><span class="ico">${ICON.home}</span>Home<span class="count">${live.length}</span></a>
       <a href="#/create" data-r="create"><span class="ico">${ICON.spark}</span>Create with AI</a>
+      <a href="#/import" data-r="import"><span class="ico">${ICON.up}</span>Import code</a>
       <a href="#/lab" data-r="lab"><span class="ico">${ICON.lab}</span>Kernel Lab</a>
       <a href="#/drafts" data-r="drafts"><span class="ico">${ICON.drafts}</span>My drafts<span class="count">${drafts}</span></a>
       <h4>Categories</h4>
@@ -166,7 +167,7 @@
   async function draftsView() {
     const d = (await DB.all()).filter(g => g.source === 'draft');
     view.innerHTML = `<div class="sec-head"><h1>📝 My drafts</h1><span class="muted">Stored in this browser only · publish from the Lab</span><a class="btn pri" style="margin-left:auto" href="#/create">${ICON.spark} New</a></div>
-      ${d.length ? grid(d) : `<div class="empty"><h2 style="justify-content:center">No drafts yet</h2><p>Generate a game on the Create page, paste it back, and it lands here.</p><a class="btn pri" href="#/create">Create a game</a></div>`}`;
+      ${d.length ? grid(d) : `<div class="empty"><h2 style="justify-content:center">No drafts yet</h2><p>Generate a prompt on the Create page, then paste the code on the Import page and it lands here.</p><div class="row" style="justify-content:center"><a class="btn pri" href="#/create">Create a game</a><a class="btn" href="#/import">Import code</a></div></div>`}`;
     if (d.some(x => !x.thumb)) backfillThumbs();
   }
 
@@ -424,10 +425,9 @@
             <div class="row" style="margin-top:10px"><button class="btn pri" id="c-copy">${ICON.copy} Copy prompt</button><button class="btn ghost" id="c-dlp">${ICON.down} .txt</button><span class="muted small" id="c-len"></span></div>
             <p class="muted small">Paste into Claude (or another strong model). The in-platform generator + credit ledger plugs in here later.</p>
           </div>
-          <div class="step"><h3>Paste the result</h3>
-            <textarea id="c-out" rows="8" placeholder="Paste the generated HTML here (or import a file)…"></textarea>
-            <div class="row" style="margin-top:10px"><button class="btn" id="c-val">Validate</button><label class="btn ghost">${ICON.up} Import file<input type="file" id="c-file" accept=".html,.htm,text/html" hidden></label><button class="btn go" id="c-save" style="margin-left:auto">Save draft & test ▶</button></div>
-            <ul class="checks" id="c-checks" style="margin-top:12px"></ul>
+          <div class="step"><h3>Got the code back?</h3>
+            <p class="muted small" style="margin-top:0">Paste it on the Import page. Its genre comes from the game file, not from this form.</p>
+            <a class="btn go" href="#/import">${ICON.up} Import game code</a>
           </div>
         </div>
       </div>`;
@@ -464,32 +464,79 @@
     ['#c-title', '#c-pitch', '#c-extra'].forEach(s => $(s).addEventListener('input', update));
     $('#c-copy').onclick = () => { $('#c-prompt').select(); navigator.clipboard.writeText($('#c-prompt').value).then(() => toast('Prompt copied', 'good'), () => { document.execCommand('copy'); toast('Prompt copied', 'good'); }); };
     $('#c-dlp').onclick = () => download(SG.slug(sel.title || 'game') + '-prompt.txt', $('#c-prompt').value, 'text/plain');
+    renderOpts(); update();
+  }
+  /* ======================================================================
+     IMPORT — paste/upload generated code → draft (independent of the Create form)
+     ====================================================================== */
+  async function importView() {
+    const P = window.SGPrompt;
+    const G = id => P.GENRES.find(x => x.id === id);
+    let genre = null, genreFromFile = false;
+    view.innerHTML = `
+      <div class="sec-head"><h1>${ICON.up} Import game code</h1><span class="muted">Paste generated HTML · saved as a draft in this browser</span></div>
+      <div class="create" style="grid-template-columns:1fr">
+        <div class="steps">
+          <div class="step"><h3>Paste the game</h3>
+            <textarea id="i-out" rows="10" placeholder="Paste the generated HTML here (or import a file)…"></textarea>
+            <div class="row" style="margin-top:10px"><label class="btn ghost">${ICON.up} Import file<input type="file" id="i-file" accept=".html,.htm,text/html" hidden></label><button class="btn" id="i-val">Validate</button></div>
+            <ul class="checks" id="i-checks" style="margin-top:12px"></ul>
+          </div>
+          <div class="step"><h3>Genre</h3>
+            <p class="muted small" id="i-ghint" style="margin-top:0">Paste a game first. If its MANIFEST has a genre it's picked automatically; otherwise choose one.</p>
+            <div class="chips" id="i-genre">${P.GENRES.map(g => `<button data-id="${g.id}">${g.emoji} ${esc(g.label)}</button>`).join('')}</div>
+          </div>
+          <div class="step"><h3>Save</h3>
+            <div class="row"><span class="muted small" id="i-sum">Nothing pasted yet.</span><button class="btn go" id="i-save" style="margin-left:auto" disabled>Save draft & test ▶</button></div>
+          </div>
+        </div>
+      </div>`;
     const clean = s => s.replace(/^\s*```(?:html)?\s*\n/i, '').replace(/\n```\s*$/, '').trim();
-    function validateOut() {
-      const html = clean($('#c-out').value);
-      if (!html) { $('#c-checks').innerHTML = ''; return null; }
-      const v = SG.validate(html);
-      $('#c-checks').innerHTML = [...v.errors.map(e => `<li class="e">${esc(e)}</li>`), ...v.warnings.map(w => `<li class="w">${esc(w)}</li>`)].join('') + (v.ok ? `<li class="o">Looks valid — ${esc(v.info.id)} · ${v.info.gameKB} KB of game code · scenes: ${esc(v.info.scenes.join(', '))}</li>` : '');
-      return { html, v };
+    let cur = null;
+    function paintGenre() {
+      $$('#i-genre button').forEach(b => b.classList.toggle('on', b.dataset.id === genre));
+      const g = G(genre);
+      $('#i-ghint').textContent = !cur ? 'Paste a game first. If its MANIFEST has a genre it’s picked automatically; otherwise choose one.'
+        : g ? (genreFromFile ? `Read from the game file: ${g.emoji} ${g.label}. Tap another to override.` : `${g.emoji} ${g.label}`)
+        : 'This file has no genre in its MANIFEST — pick the one that matches the game.';
+      const ok = !!(cur && cur.v.ok && genre);
+      $('#i-save').disabled = !ok;
+      $('#i-sum').textContent = !cur ? 'Nothing pasted yet.' : !cur.v.ok ? 'Fix the errors above first.' : !genre ? 'Pick a genre to continue.' : `${cur.v.info.title || cur.v.info.id} · ${g.label}`;
     }
-    $('#c-val').onclick = validateOut;
-    $('#c-file').onchange = async e => { const f = e.target.files[0]; if (!f) return; $('#c-out').value = await f.text(); validateOut(); };
-    $('#c-save').onclick = async () => {
-      const r = validateOut(); if (!r) return toast('Paste a game first', 'bad');
+    function validateOut() {
+      const html = clean($('#i-out').value);
+      if (!html) { cur = null; $('#i-checks').innerHTML = ''; paintGenre(); return null; }
+      const v = SG.validate(html);
+      $('#i-checks').innerHTML = [...v.errors.map(e => `<li class="e">${esc(e)}</li>`), ...v.warnings.map(w => `<li class="w">${esc(w)}</li>`)].join('') + (v.ok ? `<li class="o">Looks valid — ${esc(v.info.id)} · ${v.info.gameKB} KB of game code · scenes: ${esc(v.info.scenes.join(', '))}</li>` : '');
+      const fileGenre = G(v.info.genre) ? v.info.genre : null;
+      if (fileGenre) { genre = fileGenre; genreFromFile = true; }
+      else if (genreFromFile || !cur) { genre = null; genreFromFile = false; }   // never carry a genre over from a previous paste or the Create form
+      cur = { html, v };
+      paintGenre();
+      return cur;
+    }
+    let tmr = 0;
+    $('#i-out').addEventListener('input', () => { clearTimeout(tmr); tmr = setTimeout(validateOut, 300); });
+    $('#i-val').onclick = validateOut;
+    $('#i-file').onchange = async e => { const f = e.target.files[0]; if (!f) return; $('#i-out').value = await f.text(); validateOut(); };
+    $('#i-genre').onclick = e => { const b = e.target.closest('button'); if (!b || !cur) return; genre = b.dataset.id; genreFromFile = false; paintGenre(); };
+    $('#i-save').onclick = async () => {
+      const r = validateOut(); if (!r || !r.v.ok || !genre) return;
       const { v } = r; let { html } = r;
       if (!v.info.id || !SG.hasKernelBlock(html)) return toast('Needs a MANIFEST id and kernel markers', 'bad');
       const reg = await DB.registry();
       let id = SG.slug(v.info.id);
-      if (reg.games.some(x => x.id === id)) { const nid = id + '-' + Date.now().toString(36).slice(-4); html = html.replace(/(const\s+MANIFEST\s*=\s*\{[\s\S]*?\bid\s*:\s*['"`])[^'"`]+/, '$1' + nid); id = nid; }
-      const g = P.GENRES.find(x => x.id === sel.genre);
-      await DB.drafts.put({ id, title: v.info.title || sel.title || id, description: sel.pitch || '', genre: sel.genre, tags: [sel.genre, ...(sel.controls || [])], orientation: v.info.orientation || sel.orientation,
-        theme: v.info.theme || sel.theme, color: (P.THEME_SWATCH[sel.theme] || [])[1] || '#8f5bff', html, kernel: v.info.kernel, created: Date.now(), prompt: Object.assign({}, sel), emoji: g && g.emoji });
+      if (reg.games.some(x => x.id === id) || await DB.drafts.get(id)) { const nid = id + '-' + Date.now().toString(36).slice(-4); html = html.replace(/(const\s+MANIFEST\s*=\s*\{[\s\S]*?\bid\s*:\s*['"`])[^'"`]+/, '$1' + nid); id = nid; }
+      const g = G(genre), theme = v.info.theme || 'candy';
+      await DB.drafts.put({ id, title: v.info.title || id, description: '', genre, tags: [genre], orientation: v.info.orientation || g.orient,
+        theme, color: (P.THEME_SWATCH[theme] || [])[1] || '#8f5bff', html, kernel: v.info.kernel, created: Date.now(), emoji: g.emoji });
       toast('Draft saved — opening the Lab', 'good');
       renderSide();
       location.hash = '#/lab/' + encodeURIComponent(id);
     };
-    renderOpts(); update();
+    paintGenre();
   }
+
 
   /* ======================================================================
      SETTINGS
@@ -532,6 +579,7 @@
     [/^#\/g\/(.+)$/, m => gamePage(decodeURIComponent(m[1]))],
     [/^#\/lab(?:\/(.+))?$/, m => labView(m[1] && decodeURIComponent(m[1]))],
     [/^#\/create$/, () => createView()],
+    [/^#\/import$/, () => importView()],
     [/^#\/drafts$/, () => draftsView()],
   ];
   async function route() {

@@ -22,7 +22,7 @@
     if (i < 0) return {};
     const block = html.slice(i, i + 4000);
     const get = k => { const m = new RegExp('\\b' + k + "\\s*:\\s*['\"`]([^'\"`]+)['\"`]").exec(block); return m ? m[1] : undefined; };
-    return { id: get('id'), title: get('title'), version: get('version'), theme: get('theme'), orientation: get('orientation') };
+    return { id: get('id'), title: get('title'), version: get('version'), theme: get('theme'), orientation: get('orientation'), genre: get('genre') };
   }
 
   // Returns { ok, errors[], warnings[], info{} }

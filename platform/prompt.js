@@ -131,6 +131,7 @@ const MANIFEST = {
   id: '${id}',
   title: '${title.replace(/'/g, "\\'")}',
   version: '1.0.0',
+  genre: '${g.id}',
   theme: '${sel.theme}',
   orientation: '${orient.id}',
   design: ${orient.design},
