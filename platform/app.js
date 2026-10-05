@@ -36,6 +36,10 @@
   };
   const GENRE_EMOJI = Object.fromEntries((window.SGPrompt ? SGPrompt.GENRES : []).map(g => [g.id, g.emoji]));
   const emojiFor = g => GENRE_EMOJI[g.genre] || ({ showcase: '🧪', draft: '📝' })[g.genre] || '🎮';
+  const GENRE_LABEL = Object.fromEntries((window.SGPrompt ? SGPrompt.GENRES : []).map(g => [g.id, g.label]));
+  const genreLabel = g => GENRE_LABEL[g.genre] || g.genre || '';
+  const isListed = g => g.source === 'repo' && g.status !== 'lab';   // public "live" games
+  const isLabBuild = g => g.source === 'repo' && g.status === 'lab';
 
   /* ---------- toast / modal ---------- */
   function toast(msg, kind = '') {
@@ -56,19 +60,20 @@
   function thumb(g, cls = '') {
     if (g.thumb) return `<img class="${cls}" src="${esc(g.thumb)}" alt="" loading="lazy">`;
     const c = g.color || '#8f5bff';
-    return `<div class="ph ${cls}" style="background:linear-gradient(140deg, ${c}, #1b1b3a)">${emojiFor(g)}<br>${esc(g.title)}</div>`;
+    return `<div class="ph ${cls}" style="background:linear-gradient(140deg, ${c}, #1b1b3a)" aria-hidden="true">${emojiFor(g)}</div>`;
   }
   function card(g) {
     const badges = [g.source === 'draft' ? '<span class="badge draft">draft</span>' : '', g.status === 'lab' ? '<span class="badge lab">lab</span>' : ''].join('');
-    return `<a class="card" href="#/g/${encodeURIComponent(g.id)}" title="${esc(g.description || '')}">${thumb(g)}<div class="badges">${badges}</div>
-      <div class="meta"><b>${esc(g.title)}</b><span>${emojiFor(g)} ${esc(g.genre || '')}</span></div></a>`;
+    return `<a class="card" href="#/g/${encodeURIComponent(g.id)}" title="${esc(g.description || '')}">
+      <div class="thumb">${thumb(g)}<div class="badges">${badges}</div></div>
+      <div class="meta"><b>${esc(g.title)}</b><span>${emojiFor(g)} ${esc(genreLabel(g))}</span></div></a>`;
   }
   const grid = list => list.length ? `<div class="grid">${list.map(card).join('')}</div>` : `<div class="empty">Nothing here yet.</div>`;
 
   /* ---------- sidebar ---------- */
   async function renderSide() {
     const all = await DB.all();
-    const live = all.filter(g => g.source === 'repo');
+    const live = all.filter(isListed);
     const counts = {};
     live.forEach(g => (g.tags || []).forEach(t => counts[t] = (counts[t] || 0) + 1));
     const tags = Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 18);
@@ -97,7 +102,8 @@
      ====================================================================== */
   async function home() {
     const all = await DB.all();
-    const live = all.filter(g => g.source === 'repo');
+    const live = all.filter(isListed);
+    const labBuilds = all.filter(isLabBuild);
     const drafts = all.filter(g => g.source === 'draft');
     const feat = live.find(g => g.featured) || live[0];
     const byGenre = {};
@@ -111,6 +117,7 @@
       </section>` : ''}
       <section class="sec"><div class="sec-head"><h2>🔥 All games</h2><span class="muted small">${live.length} live</span></div>${grid(live)}</section>
       ${drafts.length ? `<section class="sec"><div class="sec-head"><h2>📝 Your drafts</h2><a class="more" href="#/drafts">See all</a></div>${grid(drafts.slice(0, 8))}</section>` : ''}
+      ${labBuilds.length ? `<section class="sec"><div class="sec-head"><h2>🧪 Lab builds</h2><span class="muted small">test pages · not listed</span></div>${grid(labBuilds)}</section>` : ''}
       <section class="sec"><div class="hero" style="min-height:180px;background:linear-gradient(120deg,#2b1b6b,#5f33c4 50%,#c42d84)">
         <div><h1>Make a game with AI</h1><p>Pick a genre, controls and art direction. We build the prompt around the kernel contract — paste the result back and it runs in the Lab.</p>
         <a class="btn pri big" href="#/create">${ICON.spark} Start creating</a></div></div></section>
@@ -121,7 +128,7 @@
     const list = all.filter(filter);
     view.innerHTML = `<div class="sec-head"><h1>${title}</h1><span class="muted">${list.length} game${list.length === 1 ? '' : 's'}</span></div>${grid(list)}`;
   }
-  const tagView = t => listView(`${emojiFor({ genre: t })} ${esc(t)}`, g => g.source === 'repo' && ((g.tags || []).includes(t) || g.genre === t));
+  const tagView = t => listView(`${emojiFor({ genre: t })} ${esc(t)}`, g => isListed(g) && ((g.tags || []).includes(t) || g.genre === t));
   const searchView = q => { q = q.toLowerCase(); return listView(`Search: “${esc(q)}”`, g => [g.title, g.description, g.genre, ...(g.tags || [])].join(' ').toLowerCase().includes(q)); };
   async function draftsView() {
     const d = (await DB.all()).filter(g => g.source === 'draft');
@@ -239,6 +246,7 @@
           <div class="box"><h3>Validation</h3><ul class="checks" id="l-checks"><li class="o">running…</li></ul></div>
           <div class="box"><h3>Game</h3><div class="kv" id="l-info"></div></div>
           ${g.source === 'draft' ? `<div class="box"><h3>Draft</h3><p class="muted small" style="margin-top:0">Lives in this browser. Snapshot to set a thumbnail, then publish to the repo.</p>
+            <div class="field" style="margin-bottom:10px"><label>Genre</label><select id="d-genre">${(window.SGPrompt ? SGPrompt.GENRES : []).map(x => opt(x.id, `${x.emoji} ${x.label}`, g.genre)).join('')}</select></div>
             <div class="row"><button class="btn sm pri" id="d-pub">${ICON.up} Publish</button><button class="btn sm" id="d-thumb">${ICON.cam} Set thumbnail</button><button class="btn sm warn" id="d-del">${ICON.trash}</button></div>
             ${g.thumb ? `<img src="${esc(g.thumb)}" style="width:100%;border-radius:12px;margin-top:12px" alt="">` : ''}</div>`
           : `<a class="btn" href="#/g/${esc(g.id)}">▶ Open game page</a>`}
@@ -319,6 +327,9 @@
     $$('#ltabs button[data-t]').forEach(b => b.onclick = () => { S.tab = b.dataset.t; saveS(); $$('#ltabs button[data-t]').forEach(x => x.classList.toggle('on', x === b)); renderPane(); });
     if (g.source === 'draft') {
       $('#d-del').onclick = async () => { if (!confirm(`Delete draft “${g.title}”?`)) return; await DB.drafts.del(g.id); toast('Draft deleted'); renderSide(); location.hash = '#/drafts'; };
+      $('#d-genre').onchange = async e => { const dr = await DB.drafts.get(g.id); const ng = SGPrompt.GENRES.find(x => x.id === e.target.value);
+        dr.tags = [ng.id, ...(dr.tags || []).filter(t => t !== dr.genre && t !== ng.id)]; dr.genre = ng.id; dr.emoji = ng.emoji;
+        await DB.drafts.put(dr); toast(`Genre set to ${ng.label}`, 'good'); renderSide(); };
       $('#d-thumb').onclick = async () => { const d = host && await host.snapshot(600); if (!d) return toast('Snapshot failed', 'bad'); const dr = await DB.drafts.get(g.id); dr.thumb = d; await DB.drafts.put(dr); toast('Thumbnail saved', 'good'); labView(g.id); };
       $('#d-pub').onclick = () => publishDialog(g);
     }
