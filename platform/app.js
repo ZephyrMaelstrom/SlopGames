@@ -64,9 +64,41 @@
   }
   function card(g) {
     const badges = [g.source === 'draft' ? '<span class="badge draft">draft</span>' : '', g.status === 'lab' ? '<span class="badge lab">lab</span>' : ''].join('');
-    return `<a class="card" href="#/g/${encodeURIComponent(g.id)}" title="${esc(g.description || '')}">
+    return `<a class="card" data-id="${esc(g.id)}" href="#/g/${encodeURIComponent(g.id)}" title="${esc(g.description || '')}">
       <div class="thumb">${thumb(g)}<div class="badges">${badges}</div></div>
       <div class="meta"><b>${esc(g.title)}</b><span>${emojiFor(g)} ${esc(genreLabel(g))}</span></div></a>`;
+  }
+  /* Auto-thumbnails: drafts saved without a thumbnail get one by booting the game in a hidden frame
+     and snapshotting its title screen. Runs one draft at a time; each draft is tried once per page load. */
+  const thumbTried = new Set();
+  let thumbBusy = false;
+  async function captureThumb(d) {
+    const f = makeFrame();
+    f.style.cssText = 'position:fixed;right:0;bottom:0;width:390px;height:844px;opacity:0;pointer-events:none;z-index:-1;border:0';
+    document.body.appendChild(f);
+    let h = null;
+    try {
+      const ready = new Promise(res => { h = new GameHost(f, { gameId: d.id, container: document.body, muted: true, onState: s => s.ready && res() }); });
+      f.srcdoc = await DB.playableHTML(Object.assign({ source: 'draft' }, d), null);
+      await Promise.race([ready, new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 8000))]);
+      await new Promise(r => setTimeout(r, 1200));                      // let the title screen animate in
+      return await h.snapshot(600);
+    } catch (e) { return null; }
+    finally { if (h) h.destroy(); f.remove(); }
+  }
+  async function backfillThumbs() {
+    if (thumbBusy) return; thumbBusy = true;
+    try {
+      const todo = (await DB.drafts.list()).filter(d => !d.thumb && d.html && !thumbTried.has(d.id));
+      for (const d of todo) {
+        thumbTried.add(d.id);
+        const shot = await captureThumb(d);
+        if (!shot) continue;
+        const dr = await DB.drafts.get(d.id); if (!dr || dr.thumb) continue;
+        dr.thumb = shot; await DB.drafts.put(dr);
+        document.querySelectorAll(`.card[data-id="${CSS.escape(d.id)}"] .ph`).forEach(ph => { const img = new Image(); img.src = shot; img.alt = ''; ph.replaceWith(img); });
+      }
+    } finally { thumbBusy = false; }
   }
   const grid = list => list.length ? `<div class="grid">${list.map(card).join('')}</div>` : `<div class="empty">Nothing here yet.</div>`;
 
@@ -122,6 +154,7 @@
         <div><h1>Make a game with AI</h1><p>Pick a genre, controls and art direction. We build the prompt around the kernel contract — paste the result back and it runs in the Lab.</p>
         <a class="btn pri big" href="#/create">${ICON.spark} Start creating</a></div></div></section>
       ${Object.entries(byGenre).filter(([, l]) => l.length > 1).map(([gname, l]) => `<section class="sec"><div class="sec-head"><h2>${emojiFor({ genre: gname })} ${esc(gname)}</h2></div>${grid(l)}</section>`).join('')}`;
+    if (drafts.some(d => !d.thumb)) backfillThumbs();
   }
   async function listView(title, filter) {
     const all = await DB.all();
@@ -134,6 +167,7 @@
     const d = (await DB.all()).filter(g => g.source === 'draft');
     view.innerHTML = `<div class="sec-head"><h1>📝 My drafts</h1><span class="muted">Stored in this browser only · publish from the Lab</span><a class="btn pri" style="margin-left:auto" href="#/create">${ICON.spark} New</a></div>
       ${d.length ? grid(d) : `<div class="empty"><h2 style="justify-content:center">No drafts yet</h2><p>Generate a game on the Create page, paste it back, and it lands here.</p><a class="btn pri" href="#/create">Create a game</a></div>`}`;
+    if (d.some(x => !x.thumb)) backfillThumbs();
   }
 
   /* ======================================================================
@@ -306,7 +340,7 @@
       $('#l-checks').innerHTML = [...v.errors.map(e => `<li class="e">${esc(e)}</li>`), ...v.warnings.map(w => `<li class="w">${esc(w)}</li>`)].join('') || '<li class="o">All checks passed</li>';
       $('#l-info').innerHTML = `<b>id</b><span>${esc(v.info.id)}</span><b>kernel</b><span>${esc(effVer)}${S.kernel !== 'pinned' ? ' (override)' : ''}</span><b>size</b><span>${v.info.sizeKB} KB (game ${v.info.gameKB} KB)</span><b>scenes</b><span>${esc(v.info.scenes.join(', '))}</span><b>theme</b><span>${esc(v.info.theme || '—')}</span><b>source</b><span>${g.source}</span>`;
       frame = makeFrame(); device.appendChild(frame);
-      host = new GameHost(frame, { gameId: g.id, container: device, adMode: S.adMode, muted: S.muted, debug: S.debug, onLog: addLog, onState: renderState });
+      host = new GameHost(frame, { gameId: g.id, container: device, adMode: S.adMode, muted: S.muted, debug: S.debug, onLog: addLog, onState: s => { renderState(s); if (s.ready && g.source === 'draft' && !g.thumb && !thumbTried.has(g.id)) { thumbTried.add(g.id); setTimeout(async () => { const shot = host && await host.snapshot(600); if (!shot) return; const dr = await DB.drafts.get(g.id); if (dr && !dr.thumb) { dr.thumb = shot; await DB.drafts.put(dr); g.thumb = shot; } }, 1500); } } });
       renderState({}); fit();
       frame.srcdoc = html;
     }
