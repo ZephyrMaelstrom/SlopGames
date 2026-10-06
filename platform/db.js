@@ -89,6 +89,21 @@
         return JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(cur.content.replace(/\n/g, '')), ch => ch.charCodeAt(0))));
       },
     },
+    // Change a committed game's status (draft → live, live → lab …) with one registry commit.
+    async setStatus(id, status, extra = {}, onStep = () => {}) {
+      const b64 = str => { const bytes = new TextEncoder().encode(str); let bin = ''; for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000)); return btoa(bin); };
+      onStep('Reading games/registry.json…');
+      const reg = await DB.gh.getJSONFile('games/registry.json');
+      const g = reg && reg.games.find(x => x.id === id);
+      if (!g) throw new Error(id + ' is not in the repo registry');
+      Object.assign(g, extra, { status });
+      reg.updated = new Date().toISOString().slice(0, 10);
+      onStep('Committing…');
+      await DB.gh.putFile('games/registry.json', b64(JSON.stringify(reg, null, 2) + '\n'), `Registry: ${id} → ${status}`);
+      cache.reg = null;
+      onStep('Done. ' + g.title + ' is ' + status + '.');
+      return reg;
+    },
     // Publish a draft: game file (kernel inlined), thumbnail, registry entry. One commit per file (Contents API).
     async publish(draft, entry, onStep = () => {}) {
       const b64 = s => { const bytes = new TextEncoder().encode(s); let bin = ''; for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000)); return btoa(bin); };

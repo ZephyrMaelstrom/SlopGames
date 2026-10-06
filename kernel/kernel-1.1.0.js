@@ -1972,6 +1972,7 @@ const K = (() => {
     }
     return {
       add(n, def) { reg[n] = def; return def; },
+      has(n) { return !!reg[n]; },
       go(n, params, opts = {}) {
         if (busy) return;
         if (!cur || opts.instant) { swap(n, params); return; }
@@ -2118,6 +2119,8 @@ const K = (() => {
   let booted = false;
   function boot(startScene, params) {
     if (booted) return; booted = true;
+    // Title-card mode: the platform (window.SG_CARD) or a ?card URL boots a game's 'card' key-art scene for thumbnails.
+    try { if ((window.SG_CARD || /[?&]card\b/.test(location.search)) && scenes.has('card')) startScene = 'card'; } catch (e) {}
     resize();
     window.addEventListener('resize', resize);
     if (window.visualViewport) visualViewport.addEventListener('resize', resize);

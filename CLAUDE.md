@@ -5,6 +5,8 @@ Static site on GitHub Pages (main branch, repo root). No bundler, no npm depende
 ## Layout
 - `kernel/kernel-<v>.js` is the source of truth for the kernel. Never hand-edit the kernel copy inside `games/*/index.html`; edit the kernel file and run `node tools/build.mjs`.
 - `games/registry.json` is the game database. Every `games/<id>/` needs an entry; `MANIFEST.id` must equal the folder name.
+  `status`: `live` (listed), `lab` (test page, not listed), `draft` (committed but unreleased — shows under My drafts on every device; "Make live" in the Lab flips it).
+- Every game has a `card` scene (title-card key art). `python3 tools/cards.py [ids]` renders it to `games/<id>/thumb.jpg` (1200×900).
 - `platform/validate.js` is shared by the browser and `tools/build.mjs` (loaded with `vm`). Keep it dependency-free and browser-safe.
 - `kernel/KERNEL_GUIDE.md` is embedded verbatim in every generation prompt (`platform/prompt.js`). Keep it accurate and compact; when you add a kernel API, document it there and, if it serves a genre, in the genre map and in `prompt.js` GENRES briefs.
 
@@ -15,6 +17,8 @@ Three scripts: MANIFEST → `//#KERNEL-BEGIN <v>` … `//#KERNEL-END` → game. 
 ```bash
 node tools/build.mjs            # must report 0 with errors
 python3 tools/qa.py             # headless smoke test; needs playwright + chromium
+python3 tools/cards.py <id>     # re-render title cards after art changes
+python3 tools/playtest.py <id> --bot bot.js   # scripted playtest with screenshots (see the file header)
 # kernel changes: open lab/tests.html?k=<v> (or run it headless) — all tests must pass
 ```
 

@@ -1993,6 +1993,7 @@ const K = (() => {
     }
     return {
       add(n, def) { reg[n] = def; return def; },
+      has(n) { return !!reg[n]; },
       go(n, params, opts = {}) {
         if (busy) return;
         if (!cur || opts.instant) { swap(n, params); return; }
@@ -2139,6 +2140,8 @@ const K = (() => {
   let booted = false;
   function boot(startScene, params) {
     if (booted) return; booted = true;
+    // Title-card mode: the platform (window.SG_CARD) or a ?card URL boots a game's 'card' key-art scene for thumbnails.
+    try { if ((window.SG_CARD || /[?&]card\b/.test(location.search)) && scenes.has('card')) startScene = 'card'; } catch (e) {}
     resize();
     window.addEventListener('resize', resize);
     if (window.visualViewport) visualViewport.addEventListener('resize', resize);
@@ -2455,7 +2458,36 @@ K.scenes.add('over', {
   },
 });
 
-K.boot('title');
+/* Title card (tools/cards.py renders ?card to thumb.jpg): full-bleed key art, no buttons. */
+K.scenes.add('card', {
+  music: null,
+  backdrop(ctx) {
+    const v = K.view;
+    K.draw.sky('#4fc3ff', '#8a6cff');
+    const g = ctx.createRadialGradient(v.w / 2, v.h * 0.42, 40, v.w / 2, v.h * 0.42, v.fullW * 0.7);
+    g.addColorStop(0, 'rgba(255,255,255,0.35)'); g.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = g; ctx.fillRect(-v.ox, -v.oy, v.fullW, v.fullH);
+  },
+  render(ctx) {
+    const v = K.view, r = K.rng(7), x0 = -v.ox, W = v.fullW;
+    for (let i = 0; i < 26; i++) {
+      const x = x0 + r.range(0, W), y = r.range(-60, v.h + 60), rad = r.range(40, 110);
+      if (Math.abs(x - v.w / 2) < 330 && y > v.h * 0.18 && y < v.h * 0.62) continue;
+      const roll = r();
+      drawBubble(ctx, { kind: roll < 0.12 ? 'bomb' : roll < 0.22 ? 'gold' : 'normal', col: i % PALS.length, r: rad, id: i }, x, y);
+    }
+    for (let i = 0; i < 18; i++) K.draw.star(x0 + r.range(0, W), r.range(0, v.h), r.range(10, 22), '#fff6b0', { points: 4, inner: 0.35, outline: 0 });
+  },
+  hud(ctx) {
+    const v = K.view;
+    ctx.save(); ctx.translate(v.w / 2, v.h * 0.4); ctx.rotate(-0.06);
+    K.draw.text('POP', 0, -95, { size: 230, color: '#fff08a', sw: 16 });
+    K.draw.text('RUSH', 0, 115, { size: 230, color: '#ff9a9a', sw: 16 });
+    ctx.restore();
+  },
+});
+
+K.boot(/[?&]card\b/.test(location.search) ? 'card' : 'title');
 </script>
 </body>
 </html>

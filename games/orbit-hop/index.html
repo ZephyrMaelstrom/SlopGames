@@ -3,17 +3,18 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
-<title>Kernel Playground</title>
+<title>Orbit Hop</title>
 </head>
 <body>
 <script>
 "use strict";
 /* §1 MANIFEST */
 const MANIFEST = {
-  id: 'kernel-playground',
-  title: 'Kernel Playground',
+  id: 'orbit-hop',
+  title: 'Orbit Hop',
   version: '1.0.0',
-  theme: 'candy',
+  genre: 'stack',
+  theme: 'neon',
   orientation: 'portrait',
   design: { w: 720, h: 1280, maxW: 900 },
   touch: { stick: false, buttons: [] },
@@ -2199,690 +2200,911 @@ const K = (() => {
 </script>
 <script>
 "use strict";
-/* §3 GAME — Kernel Playground: one mini-game per kernel system. Doubles as the visual regression test. */
+/* §3 GAME — Orbit Hop: circle a planet, tap to leap through the orbit window to the next one. */
 
-const SAVE = K.save.define({ version: 1, defaults: { theme: 'candy' } });
-K.setTheme(SAVE.theme);
-K.meta.upgrades.define({
-  magnet: { max: 5, base: 40, growth: 1.8, value: l => 1 + l * 0.2 },
-  speed:  { max: 5, base: 60, growth: 1.7, value: l => 1 + l * 0.1 },
-  luck:   { max: 3, base: 120, growth: 2.2, value: l => l * 5 },
-});
-const TAU = K.M.TAU;
+const TAU = K.M.TAU, M = K.M;
+const GAL_N = 12;                 // planets per galaxy
+const V_FLY = 950;                // launch speed (px/s)
+const HOLE_KILL = 40;
 
-/* ======================================================================
-   Shared presentation helpers
-   ====================================================================== */
-function skyBackdrop(ctx) {
-  const v = K.view;
-  K.draw.sky();
-  ctx.fillStyle = 'rgba(255,255,255,0.08)';
-  for (let i = 0; i < 6; i++) {
-    const x = ((i * 397 + K.time * (12 + i * 4)) % (v.fullW + 500)) - 250 - v.ox;
-    ctx.beginPath(); ctx.arc(x, (i * 251 + 140) % v.h, 80 + i * 24, 0, TAU); ctx.fill();
-  }
-}
-function demoScene(def) {         // common scaffolding for every demo
-  return Object.assign({
-    gameplay: true, pausable: true,
-    onQuit() { K.scenes.go('hub'); },
-  }, def);
-}
-function hudTitle(str) { const v = K.view; K.draw.text(str, v.w / 2, 70 + v.safe.top, { size: 46, maxW: v.w - 260 }); }
-function backButton() { return K.ui.button({ icon: 'home', color: 'blue', w: 96, h: 96, place: v => ({ x: 66 + v.safe.left, y: 70 + v.safe.top }), onTap: () => K.scenes.go('hub') }); }
-
-/* ======================================================================
-   HUB
-   ====================================================================== */
-const DEMOS = [
-  { id: 'platformer', title: 'Tile Platformer', desc: 'tilemap · camera · parallax · stick + gamepad', icon: 'arrowR', color: 'green' },
-  { id: 'sling', title: 'Peg Sling', desc: 'physics · joints · contacts · aim preview', icon: 'bolt', color: 'orange' },
-  { id: 'match3', title: 'Match-3', desc: 'grid matches · collapse · cascades', icon: 'gem', color: 'pink' },
-  { id: 'swarm', title: 'Swarm Defense', desc: 'flowfield · spatial hash · 300+ sprites', icon: 'skull', color: 'red' },
-  { id: 'widgets', title: 'Widgets & Meta', desc: 'tabs · lists · sliders · shop · themes · music', icon: 'gear', color: 'blue' },
+/* ---------- 3a. DATA ---------- */
+const GALAXIES = [
+  { name: 'Nebula Nursery', sky: ['#24104f', '#06030f'], neb: ['#b44cff', '#ff3cc7'], planets: ['#22d3ff', '#ff3cc7', '#ffb02e', '#7cff6b'] },
+  { name: 'Cyan Drift', sky: ['#05324a', '#010810'], neb: ['#22d3ff', '#22ff88'], planets: ['#22ff88', '#7ad8ff', '#a77bff', '#ffe600'] },
+  { name: 'Solar Bloom', sky: ['#4a1426', '#0f0306'], neb: ['#ff8c1a', '#ff2e63'], planets: ['#ffcf3a', '#ff6a3d', '#ff3cc7', '#5ee7ff'] },
+  { name: 'Emerald Void', sky: ['#063a22', '#010a05'], neb: ['#22ff88', '#d4ff3a'], planets: ['#b6ff3a', '#22e6c4', '#ffe600', '#ff7ad1'] },
+  { name: 'Crimson Rift', sky: ['#4a0718', '#0a0104'], neb: ['#ff2e63', '#b44cff'], planets: ['#ff4b6e', '#ffa63d', '#c47bff', '#4be1ff'] },
+  { name: 'Ultraviolet Abyss', sky: ['#1a0850', '#000000'], neb: ['#7a3cff', '#22d3ff'], planets: ['#8f5bff', '#22d3ff', '#ff3cc7', '#e0e3ff'] },
+  { name: 'Golden Halo', sky: ['#3d2e06', '#080600'], neb: ['#ffe600', '#ff8c1a'], planets: ['#ffe600', '#ff8c1a', '#22ff88', '#ff3cc7'] },
 ];
-K.scenes.add('hub', {
-  music: 'chill',
-  enter() {
-    this.logo = { s: 0 }; K.tween(this.logo, { s: 1 }, 0.6, K.Ease.outBack);
-    K.ui.list({
-      items: DEMOS, itemH: 150, gap: 18, frame: false, popIn: 0.2,
-      place: v => ({ x: v.w / 2, y: v.h * 0.6 + 20, w: Math.min(v.w - 40, 660), h: Math.min(v.h * 0.62, 5 * 168 + 30) }),
-      drawItem(ctx, d, i, x, y, w, h) {
-        K.draw.card(x, y, w, h);
-        K.draw.blob(x + 78, y + h / 2, 52, d.color);
-        K.draw.icon(d.icon, x + 78, y + h / 2, 56);
-        K.draw.label(d.title, x + 150, y + h / 2 - 22, { size: 40, align: 'left', maxW: w - 220 });
-        K.draw.label(d.desc, x + 150, y + h / 2 + 26, { size: 24, align: 'left', maxW: w - 220, color: K.color.mix(K.THEME.paperText, K.THEME.paper, 0.4) });
-        if (d.id === 'platformer' && K.meta.levels.stars(0)) for (let s = 0; s < 3; s++) K.draw.star(x + w - 110 + s * 36, y + 34, 15, s < K.meta.levels.stars(0) ? '#ffd23f' : '#cfcfdf', { outline: 3 });
-        K.draw.icon('play', x + w - 50, y + h / 2, 44, K.THEME.colors[d.color][1]);
-      },
-      onItem: d => K.scenes.go(d.id),
-    });
-  },
-  backdrop: skyBackdrop,
-  hud(ctx) {
-    const v = K.view;
-    K.draw.pill(150 + v.safe.left, 66 + v.safe.top, K.fmt(K.meta.wallet.get('coins')), { icon: 'coin', size: 34, minW: 200 });
-    K.draw.pill(v.w - 150 - v.safe.right, 66 + v.safe.top, String(K.meta.levels.totalStars()), { icon: 'star', size: 34, minW: 160 });
-    ctx.save(); ctx.translate(v.w / 2, 210 + v.safe.top); ctx.scale(this.logo.s, this.logo.s); ctx.rotate(-0.04);
-    K.draw.text('KERNEL', 0, -50, { size: 96, color: K.THEME.colors.yellow[0] });
-    K.draw.text('PLAYGROUND', 0, 45, { size: 80, color: K.THEME.colors.pink[0], maxW: v.w - 60 });
-    ctx.restore();
-    K.draw.text('kernel v' + K.VERSION + ' · theme ' + K.THEME.name, v.w / 2, 320 + v.safe.top, { size: 26, sw: 5 });
-  },
-});
+const gal = g => GALAXIES[g % GALAXIES.length];
+const galName = g => gal(g).name + (g >= GALAXIES.length ? ' ' + ['', 'II', 'III', 'IV', 'V', 'VI'][Math.min(5, Math.floor(g / GALAXIES.length))] : '');
 
-/* ======================================================================
-   DEMO 1 — TILE PLATFORMER (Tilemap, camera follow/bounds, parallax, coyote time, one-way, hazards)
-   ====================================================================== */
-const PF = {
-  build() {
-    const W = 60, H = 14, g = [];
-    for (let y = 0; y < H; y++) g.push(new Array(W).fill('.'));
-    const fill = (x0, x1, y0, y1, c) => { for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) if (x >= 0 && x < W && y >= 0 && y < H) g[y][x] = c; };
-    fill(0, 0, 0, 13, '#');
-    fill(0, 10, 12, 13, '#'); fill(13, 21, 12, 13, '#'); fill(24, 31, 11, 13, '#'); fill(34, 42, 12, 13, '#'); fill(46, 59, 12, 13, '#');
-    fill(17, 18, 11, 11, '^'); fill(38, 39, 11, 11, '^');
-    fill(5, 8, 8, 8, '-'); fill(13, 16, 8, 8, '-'); fill(25, 28, 7, 7, '-'); fill(31, 35, 5, 5, '-'); fill(47, 50, 8, 8, '-');
-    fill(20, 21, 9, 11, '='); fill(43, 44, 9, 11, '=');
-    fill(5, 8, 7, 7, 'o'); fill(13, 16, 7, 7, 'o'); fill(25, 28, 6, 6, 'o'); fill(31, 35, 4, 4, 'o'); fill(11, 12, 9, 9, 'o'); fill(22, 23, 8, 8, 'o'); fill(47, 50, 7, 7, 'o'); fill(43, 44, 7, 7, 'o');
-    g[10][27] = 'C'; g[11][55] = 'G';
-    return new K.Tilemap({ size: 80, edge: 'open', rows: g.map(r => r.join('')), legend: {
-      '=': { solid: true, color: 'purple' },
-      'o': { coin: true }, '^': { hazard: true }, 'C': { check: true }, 'G': { goal: true },
-    } });
-  },
-  create() {
-    const map = PF.build();
-    const start = { x: 2.5 * 80, y: 11 * 80 - 40 };
-    return { map, t: 0, coins: 0, total: map.find('o').length, check: Object.assign({}, start), deaths: 0, won: false, events: [],
-      p: { x: start.x, y: start.y, px: start.x, py: start.y, w: 46, h: 60, vx: 0, vy: 0, face: 1, coyote: 0, buf: 0, drop: 0, onGround: false, inv: 0 } };
-  },
-  step(s, dt, cmd) {
-    if (s.won) return;
-    const p = s.p, RUN = 520, GRAV = 2700;
-    s.t += dt; p.px = p.x; p.py = p.y; p.inv = Math.max(0, p.inv - dt);
-    const acc = p.onGround ? 4800 : 2800;
-    p.vx = K.M.approach(p.vx, cmd.mx * RUN, acc * dt);
-    if (cmd.mx) p.face = Math.sign(cmd.mx);
-    p.coyote = p.onGround ? 0.1 : p.coyote - dt;
-    p.buf = cmd.jump ? 0.13 : p.buf - dt;
-    p.drop = Math.max(0, p.drop - dt); p.dropThrough = p.drop > 0;
-    if (cmd.down && p.onGround && cmd.jump) { p.drop = 0.25; p.buf = 0; }
-    if (p.buf > 0 && p.coyote > 0) { p.vy = -1120; p.buf = 0; p.coyote = 0; s.events.push({ type: 'jump', x: p.x, y: p.y + p.h / 2 }); }
-    p.vy += (p.vy < 0 && !cmd.jumpHeld ? GRAV * 2.2 : GRAV) * dt;
-    p.vy = Math.min(p.vy, 1600);
-    const wasGround = p.onGround, fallV = p.vy;
-    const touched = s.map.move(p, dt);
-    if (p.onGround && !wasGround && fallV > 500) s.events.push({ type: 'land', x: p.x, y: p.y + p.h / 2, v: fallV });
-    p.x = K.M.clamp(p.x, p.w / 2, s.map.pw - p.w / 2);
-    for (const t of touched) {
-      if (t.info.coin) { s.map.set(t.tx, t.ty, '.'); s.coins++; s.events.push({ type: 'coin', x: (t.tx + 0.5) * 80, y: (t.ty + 0.5) * 80 }); }
-      else if (t.info.hazard && !p.inv) return PF.die(s);
-      else if (t.info.check && s.check.x !== (t.tx + 0.5) * 80) { s.check = { x: (t.tx + 0.5) * 80, y: (t.ty + 1) * 80 - 40 }; s.events.push({ type: 'check', x: s.check.x, y: s.check.y }); }
-      else if (t.info.goal) { s.won = true; s.events.push({ type: 'win' }); return; }
-    }
-    if (p.y > s.map.ph + 200) PF.die(s);
-  },
-  die(s) {
-    const p = s.p; s.deaths++;
-    s.events.push({ type: 'die', x: p.x, y: Math.min(p.y, s.map.ph) });
-    p.x = p.px = s.check.x; p.y = p.py = s.check.y; p.vx = p.vy = 0; p.inv = 1;
-  },
-};
-const hillsNoise = K.noise(7);
-K.scenes.add('platformer', demoScene({
-  music: 'upbeat',
-  touch: { stick: true, buttons: [{ action: 'action', icon: 'arrowU', color: 'green' }] },
-  enter() {
-    this.s = PF.create();
-    this.squash = { v: 1, vel: 0 };
-    K.camera.follow(this.s.p, { lerp: 7, offY: -60, deadW: 80, snap: true });
-    K.camera.setBounds(0, -400, this.s.map.pw, this.s.map.ph + 400);
-    K.ui.pauseButton(); backButton();
-  },
-  update(dt) {
-    const I = K.input;
-    PF.step(this.s, dt, { mx: I.axisX(), jump: I.pressed('action') || I.pressed('up'), jumpHeld: I.down('action') || I.down('up'), down: I.down('down') });
-    for (const e of this.s.events) this.present(e);
-    this.s.events.length = 0;
-  },
-  present(e) {
-    switch (e.type) {
-      case 'jump': K.audio.play('jump'); K.fx.puff(e.x, e.y, { count: 4 }); this.squash.v = 1.25; break;
-      case 'land': K.audio.play('land'); K.fx.puff(e.x, e.y, { count: 6 }); this.squash.v = 0.72; if (e.v > 1200) K.fx.shake(8, 0.15); break;
-      case 'coin': K.audio.play('coin'); K.fx.burst(e.x, e.y, { shape: 'star', colors: ['#fff08a', '#ffc21a'], count: 8, speed: [150, 380] }); K.fx.text(e.x, e.y - 30, '+1', { size: 40, color: '#fff08a' }); K.haptic('light'); break;
-      case 'check': K.audio.play('power'); K.fx.ring(e.x, e.y, { r0: 10, r1: 140, color: '#8af59a' }); K.ui.toast('Checkpoint!', { icon: 'check', iconColor: K.THEME.colors.green[1] }); break;
-      case 'die': K.audio.play('hurt'); K.fx.shake(18, 0.35); K.fx.flash('#ff4b5c', 0.35); K.fx.burst(e.x, e.y, { colors: K.THEME.colors.green, count: 22 }); K.haptic('heavy'); K.camera.snap(); break;
-      case 'win': this.win(); break;
-    }
-  },
-  async win() {
-    const s = this.s, stars = s.coins >= s.total ? 3 : s.coins >= s.total * 0.6 ? 2 : 1;
-    K.meta.levels.complete(0, stars, s.coins);
-    K.meta.wallet.add('coins', s.coins * 5);
-    K.audio.play('win'); K.music.play('victory'); K.haptic('success');
-    K.fx.burst(K.view.w / 2, K.view.h * 0.3, { screen: true, shape: 'star', colors: ['#fff08a', '#ffc21a', '#fff'], count: 40, speed: [300, 900] });
-    const shown = { k: 0 }; K.tween(shown, { k: stars }, 0.9, K.Ease.linear, 0.4);
-    const i = await K.ui.dialog({ title: 'LEVEL CLEAR!', color: 'green', text: `${s.coins}/${s.total} coins · ${s.deaths} falls · +${s.coins * 5} wallet`, extraH: 110,
-      draw: (ctx, x, y) => { for (let k = 0; k < 3; k++) K.draw.star(x - 110 + k * 110, y + 50 - (k === 1 ? 14 : 0), 44, k < shown.k ? '#ffd23f' : '#d8d8e6'); },
-      buttons: [{ label: 'HUB', icon: 'home', color: 'blue' }, { label: 'AGAIN', icon: 'retry', color: 'green' }] });
-    K.scenes.go(i === 1 ? 'platformer' : 'hub');
-  },
-  backdrop(ctx) {
-    const v = K.view, cam = K.camera;
-    K.draw.sky(K.THEME.sky[0], K.color.mix(K.THEME.sky[1], '#ffffff', 0.25));
-    const layer = (f, base, amp, col, scale) => cam.parallax(ctx, f, c => {
-      const x0 = (cam.x - v.w / 2) * f - v.ox - 40, x1 = x0 + v.fullW + 80;
-      c.beginPath(); c.moveTo(x0, v.h + 50);
-      for (let x = x0; x <= x1 + 40; x += 40) c.lineTo(x, base + hillsNoise.fbm1(x * scale, 3) * amp);
-      c.lineTo(x1 + 40, v.h + 50); c.closePath(); c.fillStyle = col; c.fill();
-      c.lineWidth = 6; c.strokeStyle = K.color.alpha(K.THEME.ink, 0.25); c.stroke();
-    });
-    layer(0.15, v.h * 0.55, 140, K.color.mix(K.THEME.colors.blue[0], '#ffffff', 0.35), 0.0025);
-    layer(0.4, v.h * 0.68, 110, K.color.mix(K.THEME.colors.green[0], K.THEME.colors.blue[0], 0.4), 0.004);
-  },
-  render(ctx, a) {
-    const s = this.s, p = s.p, t = K.time;
-    s.map.draw(ctx, (c, ch, x, y, S, tx, ty) => {
-      const inf = s.map.info(ch);
-      if (inf.coin) K.draw.icon('coin', x + S / 2, y + S / 2 + Math.sin(t * 4 + tx) * 6, S * 0.55);
-      else if (inf.hazard) { for (let k = 0; k < 3; k++) K.draw.poly([x + k * S / 3, y + S, x + (k + 0.5) * S / 3, y + S * 0.35, x + (k + 1) * S / 3, y + S], K.THEME.colors.gray[0], { outline: 4 }); }
-      else if (inf.goal || inf.check) {
-        const col = inf.goal ? K.THEME.colors.yellow : (s.check.x === x + S / 2 ? K.THEME.colors.green : K.THEME.colors.gray);
-        K.draw.line([x + S * 0.3, y + S, x + S * 0.3, y - S * (inf.goal ? 1.2 : 0.4)], '#ffffff', 8);
-        const fy = y - S * (inf.goal ? 1.2 : 0.4), wv = Math.sin(t * 6) * 6;
-        K.draw.poly([x + S * 0.3, fy, x + S * 1.0, fy + 22 + wv, x + S * 0.3, fy + 48], col[1]);
-      } else s.map.defaultTile(ch, x, y, S, tx, ty);
-    });
-    const x = K.M.lerp(p.px, p.x, a), y = K.M.lerp(p.py, p.y, a);
-    const sq = K.spring(this.squash, 1, 1 / 60, 300, 14);
-    if (p.inv > 0 && Math.floor(K.time * 20) % 2) return;
-    ctx.save(); ctx.translate(x, y + p.h / 2); ctx.scale(p.face * (2 - sq), sq);
-    K.draw.critter(0, -34, 34, K.THEME.colors.green, { mood: p.onGround ? 'happy' : null, look: { x: 1, y: p.vy / 2000 } });
-    ctx.restore();
-  },
-  hud() {
-    const v = K.view, s = this.s;
-    K.draw.pill(v.w / 2, 70 + v.safe.top, `${s.coins}/${s.total}`, { icon: 'coin', size: 36, minW: 200 });
-    if (K.time < 4) K.draw.text(K.input.touch ? 'Stick to move · ▲ to jump' : 'Arrows/WASD · Space to jump · ↓+Space drops', v.w / 2, 170 + v.safe.top, { size: 28, sw: 5, maxW: v.w - 40 });
-  },
-}));
+const SKINS = [
+  { id: 'blip',   name: 'Blip',   col: '#22d3ff', trail: '#7ae8ff', acc: 'none' },
+  { id: 'mochi',  name: 'Mochi',  col: '#ff5cc8', trail: '#ffb0e6', acc: 'ears', cost: 40 },
+  { id: 'zap',    name: 'Zap',    col: '#ffe600', trail: '#fffbb0', acc: 'antenna', cost: 100, shape: 'spark' },
+  { id: 'glorp',  name: 'Glorp',  col: '#22ff88', trail: '#b0ffd0', acc: 'stalks', cost: 180 },
+  { id: 'saucer', name: 'Saucer', col: '#b44cff', trail: '#ebc4ff', acc: 'saucer', cost: 300 },
+  { id: 'comet',  name: 'Comet',  col: '#ff8c1a', trail: '#ffcf6a', acc: 'flame', ms: { planets: 20 }, msText: 'Reach planet 20' },
+  { id: 'astro',  name: 'Astro',  col: '#e8ecff', trail: '#9fdcff', acc: 'helmet', ms: { galaxy: 3 }, msText: 'Find galaxy 4' },
+  { id: 'void',   name: 'Void',   col: '#3a2470', trail: '#ffe600', acc: 'crown', shape: 'star', ms: { combo: 8 }, msText: 'Perfect combo x8' },
+];
+const skinById = id => SKINS.find(k => k.id === id) || SKINS[0];
 
-/* ======================================================================
-   DEMO 2 — PEG SLING (Physics: statics, bumpers, rope joint, sensors, contacts, predict)
-   ====================================================================== */
-const SL = {
-  create(W, H, seed) {
-    const w = new K.Physics({ gravity: [0, 1300], iterations: 4 });
-    const r = K.rng(seed);
-    w.addSegment(30, 140, 30, H, { restitution: 0.6 }); w.addSegment(W - 30, 140, W - 30, H, { restitution: 0.6 });
-    w.addSegment(30, 140, W / 2, 90, { restitution: 0.6 }); w.addSegment(W / 2, 90, W - 30, 140, { restitution: 0.6 });
-    const pegs = [];
-    const cols = Math.floor((W - 100) / 90);
-    for (let row = 0; row < 6; row++) for (let c = 0; c < cols; c++) {
-      const x = 70 + c * ((W - 140) / (cols - 1)) + (row % 2 ? 22 : -22), y = 270 + row * 90;
-      if (x < 50 || x > W - 50) continue;
-      pegs.push(w.addCircle({ x, y, r: 15, isStatic: true, restitution: 0.55, data: { peg: true, lit: false, glow: 0 } }));
-    }
-    const bumpers = [[W * 0.25, 860], [W * 0.75, 860], [W * 0.5, 980]].map(([x, y]) => w.addCircle({ x, y, r: 42, isStatic: true, restitution: 1.15, data: { bumper: true, pulse: 0 } }));
-    const anchor = { x: W * 0.78, y: 170 };
-    const ball = w.addCircle({ x: anchor.x - 120, y: anchor.y + 130, r: 38, mass: 60, restitution: 0.3, data: { wreck: true } });
-    w.addJoint(ball, anchor, { len: 180, rope: true });
-    const bucket = w.addBox(W / 2 - 70, H - 70, 140, 40, { sensor: true, data: { bucket: true } });
-    r();
-    return { w, W, H, pegs, bumpers, anchor, ball, bucket, balls: 8, score: 0, shot: null, t: 0, over: false, events: [], launch: { x: W / 2, y: H - 230 } };
-  },
-  step(s, dt, cmd) {
-    if (s.over) return;
-    s.t += dt;
-    s.bucket.x = s.W / 2 - 70 + Math.sin(s.t * 1.3) * (s.W / 2 - 140);
-    if (cmd.launch && !s.shot && s.balls > 0) {
-      s.balls--;
-      s.shot = s.w.addCircle({ x: s.launch.x, y: s.launch.y, r: 18, vx: cmd.launch.vx, vy: cmd.launch.vy, restitution: 0.6, friction: 0.02, data: { shot: true } });
-      s.events.push({ type: 'launch' });
-    }
-    s.w.step(dt);
-    for (const c of s.w.contacts) {
-      const o = c.b && c.b.data;
-      if (!o || !c.a.data || !c.a.data.shot) continue;
-      if (o.peg && !o.lit) { o.lit = true; s.score += 100; s.events.push({ type: 'peg', x: c.b.x, y: c.b.y }); }
-      else if (o.peg) { o.glow = 1; if (c.impulse > 120) s.events.push({ type: 'tink', x: c.b.x, y: c.b.y }); }
-      if (o.bumper && c.impulse > 50) { o.pulse = 1; s.score += 25; s.events.push({ type: 'bump', x: c.b.x, y: c.b.y }); }
-      if (o.wreck && c.impulse > 50) s.events.push({ type: 'wreck', x: c.b.x, y: c.b.y });
-      if (o.bucket && c.sensor) { s.balls++; s.score += 500; s.events.push({ type: 'bucket', x: c.a.x, y: c.a.y }); s.w.remove(s.shot); s.shot = null; break; }
-    }
-    if (s.shot && (s.shot.y > s.H + 60 || s.t > 0 && Math.hypot(s.shot.vx, s.shot.vy) < 4 && s.shot.y > s.H - 200)) { s.w.remove(s.shot); s.shot = null; s.events.push({ type: 'lost' }); }
-    if (!s.shot && (s.balls === 0 || s.pegs.every(p => p.data.lit))) { s.over = true; s.events.push({ type: 'over', cleared: s.pegs.every(p => p.data.lit) }); }
-  },
-  velocity(dx, dy) { const k = 7.5, l = Math.min(Math.hypot(dx, dy), 230); const a = Math.atan2(dy, dx); return { vx: -Math.cos(a) * l * k, vy: -Math.sin(a) * l * k, power: l / 230 }; },
-};
-K.scenes.add('sling', demoScene({
-  music: 'retro',
-  touch: null,
-  enter() {
-    const v = K.view;
-    this.s = SL.create(v.w, v.h, 11);
-    K.ui.pauseButton(); backButton();
-  },
-  update(dt) {
-    const p = K.input.pointer, s = this.s;
-    let launch = null;
-    if (p.released && p.dragging && !s.shot) { const vel = SL.velocity(p.x - p.startX, p.y - p.startY); if (vel.power > 0.15) launch = vel; }
-    SL.step(s, dt, { launch });
-    for (const e of s.events) this.present(e);
-    s.events.length = 0;
-  },
-  present(e) {
-    switch (e.type) {
-      case 'launch': K.audio.play('whoosh'); K.haptic('medium'); break;
-      case 'peg': K.audio.play('bounce', 1.5 + Math.random() * 0.5); K.fx.ring(e.x, e.y, { r0: 10, r1: 50, color: K.THEME.colors.yellow[0] }); K.fx.text(e.x, e.y - 20, '+100', { size: 32, color: '#fff08a', rise: 70, life: 0.6 }); break;
-      case 'tink': K.audio.play('bounce', 2.2); break;
-      case 'bump': K.audio.play('bounce', 0.8); K.fx.shake(6, 0.12); K.fx.burst(e.x, e.y, { colors: K.THEME.colors.pink, count: 8 }); break;
-      case 'wreck': K.audio.play('hit'); K.fx.shake(10, 0.2); break;
-      case 'bucket': K.audio.play('coin'); K.fx.burst(e.x, e.y, { shape: 'star', colors: ['#fff08a', '#8af59a'], count: 18 }); K.ui.toast('+1 ball  +500', { icon: 'star' }); break;
-      case 'lost': K.audio.play('error'); break;
-      case 'over': this.finish(e.cleared); break;
-    }
-  },
-  async finish(cleared) {
-    const s = this.s, coins = Math.floor(s.score / 100);
-    K.meta.wallet.add('coins', coins);
-    K.audio.play(cleared ? 'win' : 'lose');
-    const i = await K.ui.dialog({ title: cleared ? 'BOARD CLEAR!' : 'OUT OF BALLS', color: cleared ? 'green' : 'orange', icon: cleared ? 'trophy' : 'bolt',
-      text: `Score ${s.score.toLocaleString()} · ${s.pegs.filter(p => p.data.lit).length}/${s.pegs.length} pegs · +${coins} coins`,
-      buttons: [{ label: 'HUB', icon: 'home', color: 'blue' }, { label: 'AGAIN', icon: 'retry', color: 'green' }] });
-    K.scenes.go(i === 1 ? 'sling' : 'hub');
-  },
-  backdrop: skyBackdrop,
-  render(ctx) {
-    const s = this.s, w = s.w;
-    for (const st of w.statics) if (st.kind === 'seg') K.draw.line([st.ax, st.ay, st.bx, st.by], K.THEME.colors.gray[0], 12);
-    // rope + wrecking ball
-    K.draw.line([s.anchor.x, s.anchor.y, s.ball.x, s.ball.y], '#d9b27a', 8);
-    K.draw.blob(s.anchor.x, s.anchor.y, 14, 'gray');
-    K.draw.critter(s.ball.x, s.ball.y, s.ball.r, ['#9a9ac0', '#4a4a70', '#22224a'], { mood: 'angry' });
-    for (const p of s.pegs) {
-      p.data.glow = Math.max(0, p.data.glow - 1 / 30);
-      if (p.data.lit) K.draw.glow(p.x, p.y, 40, K.THEME.colors.yellow[0], 0.4 + p.data.glow * 0.4);
-      K.draw.blobS(p.x, p.y, p.r, p.data.lit ? 'yellow' : 'blue');
-    }
-    for (const b of s.bumpers) {
-      b.data.pulse = Math.max(0, b.data.pulse - 1 / 20);
-      K.draw.blob(b.x, b.y, b.r * (1 + b.data.pulse * 0.25), 'pink'); K.draw.star(b.x, b.y, 20, '#fff', { outline: 3 });
-    }
-    const bk = s.bucket; K.draw.block(bk.x, bk.y, bk.w, bk.h, 'green', { r: 14 }); K.draw.text('+1', bk.x + bk.w / 2, bk.y + bk.h / 2 - 2, { size: 28 });
-    // launcher + aiming
-    const L = s.launch, p = K.input.pointer;
-    K.draw.block(L.x - 60, L.y + 26, 120, 40, 'orange', { r: 14 });
-    if (s.shot) { K.draw.blob(s.shot.x, s.shot.y, s.shot.r, 'red'); K.fx.trail(s.shot.x, s.shot.y, { color: K.THEME.colors.red[0] }); }
-    else if (s.balls > 0) {
-      let bx = L.x, by = L.y;
-      if (p.down && p.dragging) {
-        const v = SL.velocity(p.x - p.startX, p.y - p.startY);
-        bx = L.x + Math.cos(Math.atan2(p.y - p.startY, p.x - p.startX)) * v.power * 60; by = L.y + Math.sin(Math.atan2(p.y - p.startY, p.x - p.startX)) * v.power * 60;
-        K.draw.dots(s.w.predict(L.x, L.y, v.vx, v.vy, 26, 1 / 30, 18, true), '#ffffff', 8);
-        K.draw.line([L.x - 40, L.y, bx, by, L.x + 40, L.y], '#d9b27a', 6);
-      }
-      K.draw.blob(bx, by, 18, 'red');
-    }
-  },
-  hud() {
-    const v = K.view;
-    K.draw.pill(v.w / 2 - 110, 70 + v.safe.top, String(this.s.balls), { icon: 'heart', size: 34, minW: 140 });
-    K.draw.pill(v.w / 2 + 90, 70 + v.safe.top, this.s.score.toLocaleString(), { icon: 'star', size: 34, minW: 180 });
-    if (!this.s.shot && K.time < 5) K.draw.text('Drag back & release to fling', v.w / 2, v.h - 110, { size: 30, sw: 5 });
-  },
-}));
+const ACH = [
+  { id: 'first',   name: 'Lift Off',         desc: 'Hop to your first planet' },
+  { id: 'perfect', name: 'Bullseye',         desc: 'Land a PERFECT hop' },
+  { id: 'combo5',  name: 'On Fire',          desc: 'Reach a x5 perfect combo' },
+  { id: 'p25',     name: 'Star Sailor',      desc: 'Reach planet 25' },
+  { id: 'gal2',    name: 'Galaxy Hopper',    desc: 'Discover the 2nd galaxy' },
+  { id: 'p60',     name: 'Deep Space',       desc: 'Reach planet 60' },
+  { id: 'dust100', name: 'Stardust Hoarder', desc: 'Collect 100 stardust in total' },
+  { id: 'hole',    name: 'Event Horizon',    desc: 'Land a hop bent by a black hole' },
+  { id: 'belt',    name: 'Rock Dodger',      desc: 'Cross 10 asteroid belts in total' },
+  { id: 'warp',    name: 'Warp Speed',       desc: 'Fly through 5 warp rings in total' },
+  { id: 'cont',    name: 'Second Wind',      desc: 'Use a continue' },
+  { id: 'skins4',  name: 'Fashionista',      desc: 'Own 4 critters' },
+  { id: 'score1k', name: 'Big Numbers',      desc: 'Score 1,000 in one run' },
+  { id: 'runs10',  name: 'Frequent Flyer',   desc: 'Play 10 runs' },
+];
 
-/* ======================================================================
-   DEMO 3 — MATCH-3 (Grid.matches / collapse, cascades with sim timers, swipe input)
-   ====================================================================== */
-const M3 = {
-  COLS: 7, ROWS: 8, KINDS: 6,
+const SAVE = K.save.define({ version: 1, defaults: {
+  best: 0, bestPlanet: 0, maxGalaxy: 0, tut: 0, ach: {},
+  stats: { runs: 0, hops: 0, dust: 0, perfects: 0, belts: 0, warps: 0, bestCombo: 0 },
+} });
+if (!K.meta.unlocks.has('blip')) { K.meta.unlocks.grant('blip'); K.meta.unlocks.select('skin', 'blip'); K.save.commit(); }
+
+/* ---------- 3b. SIMULATION (pure: no drawing, no audio, no Math.random) ---------- */
+const plX = (pl, t) => pl.bx + (pl.amp ? pl.amp * Math.sin(t * pl.osp + pl.oph) : 0);
+const plR = (pl, t) => pl.r0 * (1 + (pl.pulse ? pl.pulse * Math.sin(t * pl.ps) : 0));
+const orbitR = pl => pl.r0 * (1 + pl.pulse) + 40;
+const capR = (pl, t) => Math.max(orbitR(pl) + 14, plR(pl, t) + pl.cap);
+const rockX = (rk, t) => M.wrap(rk.x0 + rk.vx * t + 300, 1320) - 300;
+const diffK = i => M.clamp((i - 5) / 65, 0, 1);
+
+const Sim = {
   create(seed) {
-    const r = K.rng(seed), g = new K.Grid(M3.COLS, M3.ROWS, null);
-    let id = 1;
-    g.forEach((_, x, y) => {
-      let k; do { k = r.int(0, M3.KINDS - 1); } while ((x >= 2 && g.get(x - 1, y).k === k && g.get(x - 2, y).k === k) || (y >= 2 && g.get(x, y - 1).k === k && g.get(x, y - 2).k === k));
-      g.set(x, y, { k, id: id++ });
-    });
-    return { g, r, nextId: id, score: 0, moves: 20, phase: 'idle', t: 0, cascade: 0, pending: null, over: false, events: [] };
-  },
-  key: c => c ? c.k : null,
-  step(s, dt, cmd) {
-    if (s.over) return;
-    if (s.phase === 'idle' && cmd.swap) {
-      const [a, b] = cmd.swap;
-      s.g.swap(a[0], a[1], b[0], b[1]);
-      s.events.push({ type: 'swap', a, b });
-      if (s.g.matches(3, M3.key).runs.length) { s.moves--; s.cascade = 0; s.phase = 'resolve'; s.t = 0.18; }
-      else { s.phase = 'unswap'; s.t = 0.18; s.pending = [a, b]; }
-      return;
-    }
-    if (s.t > 0) { s.t -= dt; return; }
-    if (s.phase === 'unswap') { const [a, b] = s.pending; s.g.swap(a[0], a[1], b[0], b[1]); s.events.push({ type: 'swap', a, b, bad: true }); s.phase = 'idle'; return; }
-    if (s.phase === 'resolve') {
-      const m = s.g.matches(3, M3.key);
-      if (!m.cells.size) { s.phase = 'idle'; if (s.moves <= 0) { s.over = true; s.events.push({ type: 'over' }); } return; }
-      s.cascade++;
-      const cleared = [];
-      for (const i of m.cells) { const x = i % M3.COLS, y = (i / M3.COLS) | 0; cleared.push({ x, y, k: s.g.get(x, y).k }); s.g.set(x, y, null); }
-      const pts = cleared.length * 10 * s.cascade; s.score += pts;
-      s.events.push({ type: 'clear', cells: cleared, pts, cascade: s.cascade, big: m.runs.some(r => r.cells.length >= 4) });
-      const moves = s.g.collapse(null);
-      const spawns = [];
-      for (let x = 0; x < M3.COLS; x++) { let n = 0; for (let y = 0; y < M3.ROWS; y++) if (!s.g.get(x, y)) n++; for (let y = 0; y < n; y++) { s.g.set(x, y, { k: s.r.int(0, M3.KINDS - 1), id: s.nextId++ }); spawns.push({ x, y, drop: n }); } }
-      s.events.push({ type: 'fall', moves, spawns });
-      s.t = 0.32;
-    }
-  },
-};
-const M3COL = ['red', 'blue', 'green', 'yellow', 'purple', 'orange'];
-const M3ICON = ['heart', 'gem', 'bolt', 'star', 'coin', 'skull'];
-K.scenes.add('match3', demoScene({
-  music: 'chill',
-  touch: null,
-  enter() { this.s = M3.create(Date.now() & 0xffff); this.off = new Map(); this.sel = null; this.used = false; K.ui.pauseButton(); backButton(); },
-  board() { const v = K.view, cell = Math.min((v.w - 50) / M3.COLS, 96); return { cell, x0: v.w / 2 - cell * M3.COLS / 2, y0: v.h / 2 - cell * M3.ROWS / 2 + 60 }; },
-  cellAt(px, py) { const B = this.board(), x = Math.floor((px - B.x0) / B.cell), y = Math.floor((py - B.y0) / B.cell); return x >= 0 && y >= 0 && x < M3.COLS && y < M3.ROWS ? [x, y] : null; },
-  update(dt) {
-    const p = K.input.pointer, B = this.board();
-    let swap = null;
-    if (p.pressed) { this.down = this.cellAt(p.x, p.y); this.used = false; }
-    if (p.down && this.down && !this.used && Math.hypot(p.dx, p.dy) > B.cell * 0.35) {
-      const [x, y] = this.down, d = Math.abs(p.dx) > Math.abs(p.dy) ? [Math.sign(p.dx), 0] : [0, Math.sign(p.dy)], b = [x + d[0], y + d[1]];
-      if (b[0] >= 0 && b[1] >= 0 && b[0] < M3.COLS && b[1] < M3.ROWS) swap = [this.down, b];
-      this.used = true; this.sel = null;
-    }
-    if (p.tap && this.down) {
-      const c = this.down;
-      if (this.sel && Math.abs(this.sel[0] - c[0]) + Math.abs(this.sel[1] - c[1]) === 1) { swap = [this.sel, c]; this.sel = null; }
-      else this.sel = (this.sel && this.sel[0] === c[0] && this.sel[1] === c[1]) ? null : c;
-    }
-    M3.step(this.s, dt, { swap });
-    for (const e of this.s.events) this.present(e);
-    this.s.events.length = 0;
-  },
-  offset(id) { let o = this.off.get(id); if (!o) { o = { x: 0, y: 0, s: 1 }; this.off.set(id, o); } return o; },
-  present(e) {
-    const B = this.board();
-    switch (e.type) {
-      case 'swap': {
-        const A = this.s.g.get(e.a[0], e.a[1]), C = this.s.g.get(e.b[0], e.b[1]);
-        const dx = e.b[0] - e.a[0], dy = e.b[1] - e.a[1];
-        const oa = this.offset(A.id), oc = this.offset(C.id);
-        oa.x = dx; oa.y = dy; oc.x = -dx; oc.y = -dy;
-        K.tween(oa, { x: 0, y: 0 }, 0.17, K.Ease.outQuad); K.tween(oc, { x: 0, y: 0 }, 0.17, K.Ease.outQuad);
-        K.audio.play(e.bad ? 'error' : 'swap'); if (e.bad) K.haptic('fail');
-        break;
-      }
-      case 'clear':
-        for (const c of e.cells) {
-          const x = B.x0 + (c.x + 0.5) * B.cell, y = B.y0 + (c.y + 0.5) * B.cell, pal = K.THEME.colors[M3COL[c.k]];
-          K.fx.burst(x, y, { colors: [pal[0], pal[1], '#fff'], count: 7, speed: [150, 450] });
-        }
-        { const c = e.cells[Math.floor(e.cells.length / 2)]; K.fx.text(B.x0 + (c.x + 0.5) * B.cell, B.y0 + (c.y + 0.5) * B.cell, '+' + e.pts, { size: 40 + e.cascade * 6, color: '#fff08a' }); }
-        K.audio.play('pop', 1 + e.cascade * 0.12); K.haptic('light');
-        if (e.cascade >= 2) { K.fx.text(K.view.w / 2, B.y0 - 40, ['', '', 'Sweet!', 'Great!', 'Amazing!', 'INSANE!'][Math.min(e.cascade, 5)], { size: 70, color: K.THEME.colors.pink[0], screen: true, rise: 40 }); K.audio.play('power'); }
-        if (e.big) K.fx.shake(8, 0.2);
-        break;
-      case 'fall':
-        for (const m of e.moves) { const o = this.offset(this.s.g.get(m.tx, m.ty).id); o.y = -(m.ty - m.fy); K.tween(o, { y: 0 }, 0.28, K.Ease.outBounce); }
-        for (const sp of e.spawns) { const o = this.offset(this.s.g.get(sp.x, sp.y).id); o.y = -sp.drop - 0.5; o.s = 0.6; K.tween(o, { y: 0, s: 1 }, 0.3, K.Ease.outBounce, 0.02 * sp.x); }
-        break;
-      case 'over': this.finish(); break;
-    }
-  },
-  async finish() {
-    const s = this.s, coins = Math.floor(s.score / 50);
-    K.meta.wallet.add('coins', coins); K.sdk.send('score', { value: s.score });
-    K.audio.play('win');
-    const i = await K.ui.dialog({ title: 'OUT OF MOVES', color: 'pink', icon: 'gem', text: `Score ${s.score.toLocaleString()} · +${coins} coins`, buttons: [{ label: 'HUB', icon: 'home', color: 'blue' }, { label: 'AGAIN', icon: 'retry', color: 'green' }] });
-    K.scenes.go(i === 1 ? 'match3' : 'hub');
-  },
-  backdrop: skyBackdrop,
-  render(ctx) {
-    const B = this.board(), g = this.s.g;
-    K.draw.rr(B.x0 - 16, B.y0 - 16, B.cell * M3.COLS + 32, B.cell * M3.ROWS + 32, 30); ctx.fillStyle = K.color.alpha(K.THEME.ink, 0.45); ctx.fill();
-    ctx.save(); K.draw.rr(B.x0 - 8, B.y0 - 8, B.cell * M3.COLS + 16, B.cell * M3.ROWS + 16, 24); ctx.clip();
-    for (let y = 0; y < M3.ROWS; y++) for (let x = 0; x < M3.COLS; x++) {
-      if ((x + y) % 2) { ctx.fillStyle = 'rgba(255,255,255,0.06)'; ctx.fillRect(B.x0 + x * B.cell, B.y0 + y * B.cell, B.cell, B.cell); }
-      const c = g.get(x, y); if (!c) continue;
-      const o = this.offset(c.id), cx = B.x0 + (x + 0.5 + o.x) * B.cell, cy = B.y0 + (y + 0.5 + o.y) * B.cell;
-      const sel = this.sel && this.sel[0] === x && this.sel[1] === y;
-      const r = B.cell * 0.4 * o.s * (sel ? 1.12 + Math.sin(K.time * 10) * 0.04 : 1);
-      K.draw.blobS(cx, cy, r, M3COL[c.k]);
-      K.draw.icon(M3ICON[c.k], cx, cy + 2, r * 0.95);
-    }
-    ctx.restore();
-  },
-  hud() {
-    const v = K.view, s = this.s;
-    K.draw.pill(v.w / 2 - 120, 70 + v.safe.top, String(s.moves), { icon: 'bolt', size: 34, minW: 140 });
-    K.draw.pill(v.w / 2 + 90, 70 + v.safe.top, s.score.toLocaleString(), { icon: 'star', size: 34, minW: 180 });
-    if (K.time < 5) K.draw.text('Swipe or tap two tiles to swap', v.w / 2, this.board().y0 - 60, { size: 30, sw: 5 });
-  },
-}));
-
-/* ======================================================================
-   DEMO 4 — SWARM DEFENSE (flowfield pathing, spatial hash, sprite cache stress, tap-to-build)
-   ====================================================================== */
-const SW = {
-  GW: 15, GH: 22,
-  create(seed) {
-    const s = { rng: K.rng(seed), walls: new Uint8Array(SW.GW * SW.GH), enemies: [], bullets: [], t: 0, spawnT: 0, fireT: 0, lives: 20, kills: 0, nextId: 1, over: false, events: [], hash: new K.SpatialHash(48), field: null };
-    s.base = [Math.floor(SW.GW / 2), 1];
-    for (let x = 2; x < SW.GW - 2; x += 3) s.walls[8 * SW.GW + x] = 1;
-    SW.reflow(s);
+    const s = { rng: K.rng(seed), t: 0, mode: 'orbit', planets: [], rocks: [], holes: [], dust: [], rings: [], belts: [],
+      cur: 0, reached: 0, score: 0, combo: 0, maxCombo: 0, perfects: 0, dustRun: 0, galaxy: 0, lockT: 0.3,
+      nextId: 1, cause: null, continued: false, events: [],
+      p: { x: 0, y: 0, px: 0, py: 0, vx: 0, vy: 0, ang: 2.4, rad: 140, radT: 140, dir: 1, from: 0, flyT: 0, bent: false, ring: -1 } };
+    s.planets.push({ i: 0, bx: 360, y: 0, r0: 95, amp: 0, osp: 0, oph: 0, pulse: 0, ps: 0, w: 2.4, cap: 90, style: 0, col: 0, g: 0, ring: false, spin: 0.2 });
+    while (s.planets[s.planets.length - 1].y > -2600) Sim.gen(s);
+    const p = s.p, pl = s.planets[0];
+    p.rad = p.radT = orbitR(pl);
+    p.x = p.px = pl.bx + Math.cos(p.ang) * p.rad; p.y = p.py = pl.y + Math.sin(p.ang) * p.rad;
     return s;
   },
-  open(s, x, y) { return x >= 0 && y >= 0 && x < SW.GW && y < SW.GH && !s.walls[y * SW.GW + x]; },
-  reflow(s) { s.field = K.path.flowfield(SW.GW, SW.GH, (x, y) => SW.open(s, x, y), [s.base]); },
-  toggle(s, x, y) {
-    if ((x === s.base[0] && y === s.base[1]) || y >= SW.GH - 1) return false;
-    const i = y * SW.GW + x; s.walls[i] ^= 1;
-    const f = K.path.flowfield(SW.GW, SW.GH, (a, b) => SW.open(s, a, b), [s.base]);
-    let ok = true; for (let xx = 0; xx < SW.GW; xx++) if (f.at(xx, SW.GH - 1) === Infinity) ok = false;
-    if (!ok) { s.walls[i] ^= 1; return false; }
-    s.field = f; return true;
+  emit(s, type, d = {}) { d.type = type; s.events.push(d); },
+  pl(s, i) { return s.planets[i - s.planets[0].i]; },
+  gen(s) {
+    const r = s.rng, prev = s.planets[s.planets.length - 1], i = prev.i + 1, k = diffK(i);
+    const r0 = M.lerp(84, 52, k) * r.range(0.9, 1.1);
+    const gap = M.lerp(420, 560, k) + r.range(-30, 30);
+    const pl = { i, bx: 0, y: prev.y - gap, r0, amp: 0, osp: 0, oph: 0, pulse: 0, ps: 0,
+      w: M.lerp(2.6, 3.6, k) * r.range(0.94, 1.06), cap: M.lerp(88, 50, k), style: r.int(0, 3), col: (prev.col + r.int(1, 3)) % 4,
+      g: Math.floor(i / GAL_N), ring: r.chance(0.3), spin: r.range(-0.4, 0.4) };
+    if (i > 9 && r.chance(M.lerp(0.25, 0.55, k))) { pl.amp = r.range(50, M.lerp(90, 150, k)); pl.osp = r.range(0.7, 1.2) * M.lerp(1, 1.5, k); pl.oph = r.range(0, TAU); }
+    if (i > 17 && r.chance(0.3)) { pl.pulse = M.lerp(0.14, 0.24, k); pl.ps = r.range(1.6, 2.6); }
+    const margin = orbitR(pl) + 32 + pl.amp;
+    const lo = Math.min(360, margin), hi = Math.max(360, 720 - margin);
+    const dx = r.sign() * r.range(90, M.lerp(220, 300, k));
+    let bx = prev.bx + dx; if (bx < lo || bx > hi) bx = prev.bx - dx;
+    pl.bx = M.clamp(bx, lo, hi);
+    s.planets.push(pl);
+    // ---- what lives in the gap between prev and pl ----
+    const ax = prev.bx, ay = prev.y, bx2 = pl.bx, by = pl.y, mx = (ax + bx2) / 2, my = (ay + by) / 2;
+    const ux = bx2 - ax, uy = by - ay, ul = Math.hypot(ux, uy), nx = -uy / ul, ny = ux / ul;
+    let hazard = false;
+    if (i > 24 && r.chance(M.lerp(0.3, 0.5, k))) {         // asteroid belt
+      hazard = true;
+      const id = s.nextId++, n = r.int(4, 5) + Math.round(k * 2), vx = r.sign() * r.range(70, 130) * M.lerp(1, 1.5, k), off = r.range(0, 1320);
+      s.belts.push({ id, y: my, crossed: false });
+      for (let j = 0; j < n; j++) s.rocks.push({ id: s.nextId++, x0: off + j * 1320 / n + r.range(-30, 30), y: my + r.range(-14, 14), vx, r: r.range(26, 36), v: r.int(0, 2), spin: r.range(-2, 2) });
+    } else if (i > 32 && r.chance(0.28)) {                  // black hole beside the lane
+      const side = r.sign(), hx = M.clamp(mx + side * r.range(150, 220), 60, 660), hy = my + r.range(-40, 40);
+      if (M.dist(hx, hy, ax, ay) > orbitR(prev) + 120 && M.dist(hx, hy, bx2, by) > orbitR(pl) + 120) {
+        hazard = true; s.holes.push({ id: s.nextId++, x: hx, y: hy, gm: r.range(2.2e7, 3.0e7) });
+      }
+    }
+    if (!hazard && i > 14 && r.chance(0.22)) s.rings.push({ id: s.nextId++, x: M.lerp(ax, bx2, 0.55), y: M.lerp(ay, by, 0.55) });
+    const nd = r.int(1, 3);
+    for (let j = 0; j < nd; j++) {
+      const f = 0.35 + (nd === 1 ? 0.15 : j * 0.3 / (nd - 1)), o = r.range(-16, 16);
+      s.dust.push({ id: s.nextId++, x: M.lerp(ax, bx2, f) + nx * o, y: M.lerp(ay, by, f) + ny * o, taken: false });
+    }
+    if (i % 4 === 2) {                                       // risky off-lane cluster
+      const sd = r.sign() * r.range(95, 130);
+      for (let j = 0; j < 3; j++) { const f = 0.4 + j * 0.1; s.dust.push({ id: s.nextId++, x: M.lerp(ax, bx2, f) + nx * sd, y: M.lerp(ay, by, f) + ny * sd, taken: false }); }
+    }
   },
-  step(s, dt, cmd, C) {           // C = cell size in px (world units)
-    if (s.over) return;
+  // Advance a flying body b by dt from time t. Shared by the live sim and by trajectory prediction.
+  flyStep(s, b, t, dt, live) {
+    const SUB = 4, h = dt / SUB, from = Sim.pl(s, b.from);
+    for (let k = 0; k < SUB; k++) {
+      const tt = t + h * (k + 1), oy = b.y;
+      for (const ho of s.holes) {
+        const dx = ho.x - b.x, dy = ho.y - b.y;
+        if (dx > 560 || dx < -560 || dy > 560 || dy < -560) continue;
+        const d2 = dx * dx + dy * dy, d = Math.sqrt(d2);
+        if (d < HOLE_KILL) return { type: 'dead', cause: 'hole', x: ho.x, y: ho.y };
+        if (d < 560) { const a = Math.min(ho.gm / d2, 6000); b.vx += dx / d * a * h; b.vy += dy / d * a * h; if (a > 260) b.bent = true; }
+      }
+      b.x += b.vx * h; b.y += b.vy * h;
+      for (const rk of s.rocks) {
+        if (Math.abs(rk.y - b.y) > rk.r + 22) continue;
+        const rx = rockX(rk, tt), rr = rk.r + 20;
+        if ((rx - b.x) * (rx - b.x) + (rk.y - b.y) * (rk.y - b.y) < rr * rr) return { type: 'dead', cause: 'rock', x: rx, y: rk.y };
+      }
+      for (const rg of s.rings) {
+        if (rg.id === b.ring) continue;
+        if ((rg.x - b.x) * (rg.x - b.x) + (rg.y - b.y) * (rg.y - b.y) < 60 * 60) {
+          b.ring = rg.id; b.vx *= 1.4; b.vy *= 1.4;
+          if (live) { s.score += 15; Sim.emit(s, 'warp', { x: rg.x, y: rg.y }); }
+        }
+      }
+      if (live) {
+        for (const d of s.dust) if (!d.taken && (d.x - b.x) * (d.x - b.x) + (d.y - b.y) * (d.y - b.y) < 50 * 50) { d.taken = true; s.dustRun++; Sim.emit(s, 'dust', { x: d.x, y: d.y }); }
+        for (const bl of s.belts) if (!bl.crossed && oy > bl.y && b.y <= bl.y) { bl.crossed = true; Sim.emit(s, 'belt', { y: bl.y }); }
+      }
+      for (let i = b.from - 1; i <= b.from + 3; i++) {
+        if (i === b.from) continue;
+        const pl = Sim.pl(s, i); if (!pl) continue;
+        const dx = plX(pl, tt) - b.x, dy = pl.y - b.y, R = capR(pl, tt);
+        if (dx * dx + dy * dy < R * R) {
+          const sp = Math.hypot(b.vx, b.vy) || 1, miss = Math.abs(dx * b.vy - dy * b.vx) / sp;
+          return { type: 'land', i, miss, perfect: miss < pl.r0 * 0.45 + 6 };
+        }
+      }
+    }
+    b.flyT += dt;
+    const far = Sim.pl(s, b.from + 2) || Sim.pl(s, b.from + 1);
+    if (b.flyT > 2.6 || b.x < -260 || b.x > 980 || b.y > from.y + 650 || (far && b.y < far.y - 500)) return { type: 'dead', cause: 'lost' };
+    return null;
+  },
+  // Pure prediction of a launch at angle `ang` and time t0 (does not touch s).
+  trace(s, ang, rad, t0, maxT, pts, maxLen) {
+    const pl = Sim.pl(s, s.cur), dir = s.p.dir, px = plX(pl, t0);
+    const b = { x: px + Math.cos(ang) * rad, y: pl.y + Math.sin(ang) * rad, vx: -Math.sin(ang) * dir * V_FLY, vy: Math.cos(ang) * dir * V_FLY,
+      from: s.cur, flyT: 0, bent: false, ring: -1 };
+    let t = t0, len = 0, acc = 0;
+    if (pts) pts.push(b.x, b.y);
+    while (b.flyT < maxT) {
+      const ox = b.x, oy = b.y;
+      const r = Sim.flyStep(s, b, t, 1 / 60, false); t += 1 / 60;
+      if (pts && len < maxLen) { const d = Math.hypot(b.x - ox, b.y - oy); len += d; acc += d; if (acc >= 34) { acc = 0; pts.push(b.x, b.y); } }
+      if (r) { r.bent = b.bent; return r; }
+    }
+    return { type: 'dead', cause: 'lost' };
+  },
+  step(s, dt, cmd) {
     s.t += dt;
-    if (cmd.tap) { const ok = SW.toggle(s, cmd.tap[0], cmd.tap[1]); s.events.push({ type: ok ? 'build' : 'blocked', x: cmd.tap[0], y: cmd.tap[1], on: ok && !!s.walls[cmd.tap[1] * SW.GW + cmd.tap[0]] }); }
-    s.spawnT -= dt;
-    const rate = Math.max(0.03, 0.5 - s.t * 0.006);
-    while (s.spawnT <= 0 && s.enemies.length < 420) {
-      s.spawnT += rate;
-      const hp = s.rng.chance(Math.min(0.5, s.t / 120)) ? 3 : 1;
-      s.enemies.push({ id: s.nextId++, x: (s.rng.range(0.5, SW.GW - 0.5)) * C, y: (SW.GH - 0.3) * C, px: 0, py: 0, vx: 0, vy: 0, hp, max: hp, sp: s.rng.range(55, 85) * (hp > 1 ? 0.75 : 1) * C / 40 });
+    const p = s.p; p.px = p.x; p.py = p.y;
+    const cur = Sim.pl(s, s.cur);
+    while (s.planets[s.planets.length - 1].y > cur.y - 2600) Sim.gen(s);
+    while (s.planets[0].i < s.cur - 2) s.planets.shift();
+    const cutY = cur.y + 1400;
+    if (s.t % 1 < dt) { K.compact(s.rocks, o => o.y < cutY); K.compact(s.dust, o => o.y < cutY); K.compact(s.holes, o => o.y < cutY); K.compact(s.rings, o => o.y < cutY); K.compact(s.belts, o => o.y < cutY); }
+    if (s.mode === 'orbit') {
+      p.ang += p.dir * cur.w * dt;
+      p.rad = M.damp(p.rad, p.radT, 12, dt);
+      p.x = plX(cur, s.t) + Math.cos(p.ang) * p.rad; p.y = cur.y + Math.sin(p.ang) * p.rad;
+      s.lockT -= dt;
+      if (cmd && cmd.tap && s.lockT <= 0) {
+        p.vx = -Math.sin(p.ang) * p.dir * V_FLY; p.vy = Math.cos(p.ang) * p.dir * V_FLY;
+        p.from = s.cur; p.flyT = 0; p.bent = false; p.ring = -1;
+        s.mode = 'fly';
+        Sim.emit(s, 'jump', { x: p.x, y: p.y, vx: p.vx, vy: p.vy });
+      }
+    } else if (s.mode === 'fly') {
+      const r = Sim.flyStep(s, p, s.t - dt, dt, true);
+      if (r && r.type === 'land') Sim.land(s, r);
+      else if (r) { s.mode = 'dead'; s.cause = r.cause; s.deadAt = { x: r.x, y: r.y }; s.over = true; Sim.emit(s, 'dead', { cause: r.cause, x: p.x, y: p.y }); }
+    } else if (s.mode === 'dead') {
+      if (s.cause === 'hole') { p.x = M.damp(p.x, s.deadAt.x, 6, dt); p.y = M.damp(p.y, s.deadAt.y, 6, dt); }
+      else if (s.cause === 'rock') { p.vy += 900 * dt; p.x += p.vx * 0.15 * dt; p.y += p.vy * 0.25 * dt; }
+      else { p.x += p.vx * 0.6 * dt; p.y += p.vy * 0.6 * dt; }
     }
-    s.hash.clear();
-    for (const e of s.enemies) s.hash.insert(e, e.x, e.y, 10);
-    const near = [];
-    for (const e of s.enemies) {
-      e.px = e.x; e.py = e.y;
-      const cx = Math.floor(e.x / C), cy = Math.floor(e.y / C), [dx, dy] = s.field.next(cx, cy);
-      let tx = (cx + 0.5 + dx) * C - e.x, ty = (cy + 0.5 + dy) * C - e.y;
-      const l = Math.hypot(tx, ty) || 1; tx /= l; ty /= l;
-      near.length = 0; s.hash.query(e.x, e.y, 18, near);
-      let sx = 0, sy = 0;
-      for (const o of near) { if (o === e) continue; const ox = e.x - o.x, oy = e.y - o.y, d2 = ox * ox + oy * oy; if (d2 > 0 && d2 < 324) { const d = Math.sqrt(d2); sx += ox / d * (18 - d); sy += oy / d * (18 - d); } }
-      e.vx = K.M.lerp(e.vx, tx * e.sp + sx * 4, 0.2); e.vy = K.M.lerp(e.vy, ty * e.sp + sy * 4, 0.2);
-      const nx = e.x + e.vx * dt, ny = e.y + e.vy * dt;
-      if (SW.open(s, Math.floor(nx / C), Math.floor(e.y / C))) e.x = nx;
-      if (SW.open(s, Math.floor(e.x / C), Math.floor(ny / C))) e.y = ny;
+  },
+  land(s, r) {
+    const p = s.p, pl = Sim.pl(s, r.i), cx = plX(pl, s.t);
+    const rx = p.x - cx, ry = p.y - pl.y;
+    p.ang = Math.atan2(ry, rx); p.rad = Math.hypot(rx, ry); p.radT = orbitR(pl);
+    p.dir = (-Math.sin(p.ang) * p.vx + Math.cos(p.ang) * p.vy) >= 0 ? 1 : -1;
+    s.mode = 'orbit'; s.lockT = 0.14; s.cur = r.i;
+    const fresh = r.i > s.reached;
+    let pts = 0, skip = 0, newGal = false;
+    if (fresh) {
+      skip = r.i - s.reached - 1; s.reached = r.i;
+      if (r.perfect) { s.combo++; s.perfects++; s.dustRun++; s.maxCombo = Math.max(s.maxCombo, s.combo); } else s.combo = 0;
+      pts = 10 * Math.min(1 + s.combo, 8) + skip * 20;
+      s.score += pts;
+      const g = Math.floor(r.i / GAL_N);
+      if (g > s.galaxy) { s.galaxy = g; newGal = true; }
     }
-    // turret
-    const bx = (s.base[0] + 0.5) * C, by = (s.base[1] + 0.5) * C;
-    s.fireT -= dt;
-    if (s.fireT <= 0 && s.enemies.length) {
-      let best = null, bd = Infinity;
-      for (const e of s.hash.query(bx, by, C * 9)) { const d = K.M.dist2(e.x, e.y, bx, by); if (d < bd) { bd = d; best = e; } }
-      if (best) { const a = Math.atan2(best.y - by, best.x - bx); s.aim = a; s.bullets.push({ x: bx, y: by, px: bx, py: by, vx: Math.cos(a) * 900, vy: Math.sin(a) * 900, life: 0.8 }); s.fireT = 0.07; s.events.push({ type: 'shoot' }); }
-    }
-    for (const b of s.bullets) {
-      b.px = b.x; b.py = b.y; b.x += b.vx * dt; b.y += b.vy * dt; b.life -= dt;
-      for (const e of s.hash.query(b.x, b.y, 14)) if (e.hp > 0 && K.M.dist2(e.x, e.y, b.x, b.y) < 196) { e.hp--; b.life = 0; s.events.push({ type: e.hp > 0 ? 'hit' : 'kill', x: e.x, y: e.y, big: e.max > 1 }); if (e.hp <= 0) s.kills++; break; }
-    }
-    K.compact(s.bullets, b => b.life > 0);
-    for (const e of s.enemies) if (e.hp > 0 && K.M.dist2(e.x, e.y, bx, by) < (C * 0.6) ** 2) { e.hp = 0; s.lives--; s.events.push({ type: 'leak', x: e.x, y: e.y }); }
-    K.compact(s.enemies, e => e.hp > 0);
-    if (s.lives <= 0) { s.over = true; s.events.push({ type: 'over' }); }
+    Sim.emit(s, 'land', { x: p.x, y: p.y, cx, cy: pl.y, r: pl.r0, i: r.i, fresh, perfect: fresh && r.perfect, combo: s.combo, pts, skip, bent: p.bent, newGal, g: s.galaxy });
+  },
+  revive(s) {
+    const pl = Sim.pl(s, s.cur), p = s.p;
+    s.mode = 'orbit'; s.over = false; s.cause = null; s.combo = 0; s.lockT = 0.6; s.continued = true; s.events.length = 0;
+    p.radT = orbitR(pl); p.rad = p.radT + 140;
+    p.x = p.px = plX(pl, s.t) + Math.cos(p.ang) * p.rad; p.y = p.py = pl.y + Math.sin(p.ang) * p.rad;
   },
 };
-K.scenes.add('swarm', demoScene({
-  music: 'tense',
-  touch: null,
-  enter() { this.s = SW.create(Date.now() & 0xffff); K.ui.pauseButton(); backButton(); },
-  board() { const v = K.view, C = Math.min((v.w - 30) / SW.GW, (v.h - 230) / SW.GH); return { C, x0: v.w / 2 - C * SW.GW / 2, y0: 150 + v.safe.top }; },
-  update(dt) {
-    const B = this.board(), p = K.input.pointer;
-    let tap = null;
-    if (p.tap) { const x = Math.floor((p.x - B.x0) / B.C), y = Math.floor((p.y - B.y0) / B.C); if (x >= 0 && y >= 0 && x < SW.GW && y < SW.GH) tap = [x, y]; }
-    SW.step(this.s, dt, { tap }, B.C);
-    for (const e of this.s.events) this.present(e, B);
-    this.s.events.length = 0;
-  },
-  present(e, B) {
-    const wx = x => B.x0 + x, wy = y => B.y0 + y;
-    switch (e.type) {
-      case 'build': K.audio.play(e.on ? 'land' : 'pop'); K.fx.puff(B.x0 + (e.x + 0.5) * B.C, B.y0 + (e.y + 0.5) * B.C); break;
-      case 'blocked': K.audio.play('error'); K.ui.toast("Can't block the path!", { icon: 'close', iconColor: K.THEME.colors.red[1] }); break;
-      case 'shoot': K.audio.play('shoot'); break;
-      case 'hit': K.fx.burst(wx(e.x), wy(e.y), { count: 3, colors: ['#fff'], speed: [80, 200], size: [3, 6] }); break;
-      case 'kill': K.fx.burst(wx(e.x), wy(e.y), { count: e.big ? 12 : 6, colors: K.THEME.colors[e.big ? 'purple' : 'red'], speed: [100, 300], size: [4, 9] }); if (e.big) K.audio.play('pop', 0.7); break;
-      case 'leak': K.audio.play('hurt'); K.fx.shake(10, 0.2); K.fx.flash('#ff4b5c', 0.2); K.haptic('medium'); break;
-      case 'over': this.finish(); break;
-    }
-  },
-  async finish() {
-    const s = this.s, coins = Math.floor(s.kills / 5);
-    K.meta.wallet.add('coins', coins); K.audio.play('lose');
-    const i = await K.ui.dialog({ title: 'BASE OVERRUN', color: 'red', icon: 'skull', text: `${s.kills} kills in ${K.fmtTime(s.t)} · +${coins} coins`, buttons: [{ label: 'HUB', icon: 'home', color: 'blue' }, { label: 'AGAIN', icon: 'retry', color: 'green' }] });
-    K.scenes.go(i === 1 ? 'swarm' : 'hub');
-  },
-  backdrop(ctx) { K.draw.sky(K.color.shade(K.THEME.sky[1], -0.3), K.color.shade(K.THEME.sky[1], -0.55)); },
-  render(ctx, a) {
-    const B = this.board(), s = this.s, C = B.C;
-    ctx.save(); ctx.translate(B.x0, B.y0);
-    K.draw.rr(-8, -8, C * SW.GW + 16, C * SW.GH + 16, 18); ctx.fillStyle = K.color.alpha(K.THEME.ink, 0.35); ctx.fill();
-    for (let y = 0; y < SW.GH; y++) for (let x = 0; x < SW.GW; x++) {
-      if (s.walls[y * SW.GW + x]) K.draw.drawSprite(K.draw.sprite('wall:' + Math.round(C), C, C, () => K.draw.block(0, 0, C, C, 'gray', { r: 8, depth: 6, outline: 3 })), x * C, y * C, { ax: 0, ay: 0 });
-    }
-    ctx.fillStyle = K.color.alpha(K.THEME.colors.red[1], 0.25); ctx.fillRect(0, (SW.GH - 1) * C, SW.GW * C, C);
-    for (const e of s.enemies) K.draw.blobS(K.M.lerp(e.px, e.x, a), K.M.lerp(e.py, e.y, a), e.max > 1 ? 13 : 10, e.max > 1 ? 'purple' : 'red', { mood: 'angry' });
-    ctx.fillStyle = '#fff08a';
-    for (const b of s.bullets) { ctx.beginPath(); ctx.arc(K.M.lerp(b.px, b.x, a), K.M.lerp(b.py, b.y, a), 4, 0, TAU); ctx.fill(); }
-    const bx = (s.base[0] + 0.5) * C, by = (s.base[1] + 0.5) * C, aim = s.aim || Math.PI / 2;
-    K.draw.line([bx, by, bx + Math.cos(aim) * C * 0.9, by + Math.sin(aim) * C * 0.9], K.THEME.colors.gray[1], 12);
-    K.draw.critter(bx, by, C * 0.55, 'blue', { mood: s.lives > 5 ? 'happy' : 'sad', look: { x: Math.cos(aim), y: Math.sin(aim) } });
-    ctx.restore();
-  },
-  hud() {
-    const v = K.view, s = this.s;
-    K.draw.hearts(v.w / 2 - 210, 70 + v.safe.top, Math.ceil(s.lives / 4), 5, 40);
-    K.draw.pill(v.w / 2 + 110, 70 + v.safe.top, s.kills + ' · ' + s.enemies.length + ' alive', { icon: 'skull', size: 28, minW: 220 });
-    if (K.time < 6) K.draw.text('Tap cells to build walls & reroute the swarm', v.w / 2, v.h - 50 - v.safe.bottom, { size: 26, sw: 5, maxW: v.w - 30 });
-  },
-}));
 
-/* ======================================================================
-   DEMO 5 — WIDGETS & META (tabs, list, toggles, sliders, dialogs, toasts, shop, daily, themes, music)
-   ====================================================================== */
-const UPGRADES = [
-  { id: 'magnet', name: 'Coin Magnet', icon: 'coin', color: 'yellow' },
-  { id: 'speed', name: 'Turbo Boots', icon: 'bolt', color: 'blue' },
-  { id: 'luck', name: 'Lucky Clover', icon: 'star', color: 'green' },
-];
-K.scenes.add('widgets', {
-  music: undefined,
-  enter() {
-    const v = K.view;
-    backButton();
-    this.tab = 0;
-    this.groups = [[], [], []];
-    const top = v => 250 + v.safe.top;
-    K.ui.tabs({ items: ['Shop', 'Settings', 'Themes'], w: Math.min(v.w - 40, 620), h: 86, value: 0,
-      place: v => ({ x: v.w / 2, y: 170 + v.safe.top, w: Math.min(v.w - 40, 620) }),
-      onChange: i => { this.tab = i; this.groups.forEach((g, k) => g.forEach(w => { w.visible = k === i; })); } });
-    // --- Shop
-    const shop = this.groups[0];
-    shop.push(K.ui.list({ items: UPGRADES, itemH: 150, gap: 16, frame: false,
-      place: v => ({ x: v.w / 2, y: top(v) + 260, w: Math.min(v.w - 40, 640), h: 520 }),
-      drawItem: (ctx, u, i, x, y, w, h) => {
-        const lvl = K.meta.upgrades.level(u.id), max = K.meta.upgrades.max(u.id), cost = K.meta.upgrades.cost(u.id), can = K.meta.wallet.can('coins', cost);
-        K.draw.card(x, y, w, h);
-        K.draw.blob(x + 74, y + h / 2, 48, u.color); K.draw.icon(u.icon, x + 74, y + h / 2, 52);
-        K.draw.label(u.name, x + 140, y + 44, { size: 36, align: 'left' });
-        for (let k = 0; k < max; k++) K.draw.block(x + 140 + k * 40, y + 82, 32, 30, k < lvl ? u.color : 'gray', { r: 8, depth: 5, outline: 3 });
-        if (isFinite(cost)) { K.draw.block(x + w - 170, y + h / 2 - 34, 150, 68, can ? 'green' : 'gray', { r: 22 }); K.draw.icon('coin', x + w - 136, y + h / 2 - 4, 40); K.draw.text(K.fmt(cost), x + w - 72, y + h / 2 - 4, { size: 30, maxW: 80 }); }
-        else K.draw.text('MAX', x + w - 95, y + h / 2, { size: 36, color: K.THEME.colors.yellow[0] });
-      },
-      onItem: u => {
-        if (K.meta.upgrades.buy(u.id)) { K.audio.play('levelup'); K.haptic('success'); K.ui.toast(u.name + ' → Lv ' + K.meta.upgrades.level(u.id), { icon: u.icon }); }
-        else { K.audio.play('error'); K.haptic('fail'); K.ui.toast(K.meta.upgrades.isMax(u.id) ? 'Already maxed' : 'Not enough coins', { icon: 'close', iconColor: K.THEME.colors.red[1] }); }
-      } }));
-    shop.push(K.ui.button({ label: 'DAILY', icon: 'gem', color: 'purple', w: 300, h: 110, place: v => ({ x: v.w / 2 - 160, y: top(v) + 610 }),
-      badge: K.meta.daily.status().available ? '!' : null,
-      onTap: async b => {
-        const st = K.meta.daily.status();
-        if (!st.available) { K.ui.toast('Come back tomorrow!', { icon: 'lock' }); return; }
-        const reward = 50 * Math.min(st.streak, 7);
-        await K.ui.dialog({ title: 'DAILY REWARD', color: 'purple', icon: 'gem', text: `Day ${st.streak} streak! Claim ${reward} coins.`, buttons: [{ label: 'CLAIM', icon: 'check', color: 'green' }] });
-        K.meta.daily.claim(); K.meta.wallet.add('coins', reward); b.badge = null; K.audio.play('coin');
-        K.fx.burst(K.view.w / 2, K.view.h / 2, { screen: true, shape: 'star', colors: ['#fff08a', '#ffc21a'], count: 30, speed: [300, 800] });
-      } }));
-    shop.push(K.ui.button({ label: '+100', icon: 'video', color: 'orange', w: 300, h: 110, place: v => ({ x: v.w / 2 + 160, y: top(v) + 610 }),
-      onTap: async () => { const r = await K.adBreak('rewarded'); if (r.granted) { K.meta.wallet.add('coins', 100); K.audio.play('coin'); K.ui.toast('+100 coins', { icon: 'coin' }); } else K.ui.toast('Ad not available', { icon: 'close' }); } }));
-    shop.push(K.ui.button({ label: 'DIALOG TEST', color: 'blue', w: 300, h: 100, place: v => ({ x: v.w / 2 - 160, y: top(v) + 740 }),
-      onTap: async () => {
-        const i = await K.ui.dialog({ title: 'PICK ONE', text: 'Vertical layout with three choices. Tap outside to dismiss.', dismiss: true, vertical: true,
-          buttons: [{ label: 'Red pill', color: 'red' }, { label: 'Blue pill', color: 'blue' }, { label: 'Both?', color: 'purple' }] });
-        K.ui.toast(i < 0 ? 'Dismissed' : ['Red', 'Blue', 'Greedy'][i] + ' chosen');
-      } }));
-    shop.push(K.ui.button({ label: 'RESET SAVE', color: 'red', w: 300, h: 100, place: v => ({ x: v.w / 2 + 160, y: top(v) + 740 }),
-      onTap: async () => { const i = await K.ui.dialog({ title: 'RESET?', color: 'red', text: 'Wipe coins, upgrades, stars and theme.', buttons: [{ label: 'NO', color: 'gray' }, { label: 'WIPE', color: 'red' }] }); if (i === 1) { K.save.reset(); K.setTheme('candy'); K.ui.toast('Save wiped'); } } }));
-    // --- Settings
-    const set = this.groups[1];
-    const row = (i) => v => ({ x: v.w / 2 + 170, y: top(v) + 70 + i * 110 });
-    set.push(K.ui.toggle({ label: 'Music', value: K.audio.musicOn, place: row(0), onChange: on => K.audio.setMusicOn(on) }));
-    set.push(K.ui.toggle({ label: 'Sound FX', value: !K.audio.muted, place: row(1), onChange: on => K.audio.setMuted(!on) }));
-    set.push(K.ui.toggle({ label: 'Haptics', value: K.haptics, place: row(2), onChange: on => { K.setHaptics(on); K.haptic('medium'); } }));
-    set.push(K.ui.slider({ label: 'Music volume', value: K.audio.musicVol, w: 480, place: v => ({ x: v.w / 2, y: top(v) + 450 }), onChange: x => K.audio.setMusicVol(x) }));
-    set.push(K.ui.slider({ label: 'SFX volume', value: K.audio.sfxVol, w: 480, color: 'green', place: v => ({ x: v.w / 2, y: top(v) + 570 }), onChange: x => K.audio.setSfxVol(x), onEnd: () => K.audio.play('coin') }));
-    const songs = ['upbeat', 'chill', 'tense', 'retro'];
-    set.push(K.ui.tabs({ items: songs, w: Math.min(K.view.w - 40, 600), h: 80, color: 'purple', value: Math.max(0, songs.indexOf(K.music.playing)),
-      place: v => ({ x: v.w / 2, y: top(v) + 700, w: Math.min(v.w - 40, 600) }), onChange: i => { K.audio.setMusicOn(true); K.music.play(songs[i]); } }));
-    // --- Themes
-    const th = this.groups[2];
-    th.push(K.ui.list({ items: Object.keys(K.THEMES), cols: 2, itemH: 200, gap: 18, frame: false,
-      place: v => ({ x: v.w / 2, y: top(v) + 400, w: Math.min(v.w - 40, 640), h: Math.min(v.h - top(v) - 80, 820) }),
-      drawItem: (ctx, name, i, x, y, w, h) => {
-        const T = K.THEMES[name];
-        K.draw.rr(x, y, w, h, 26); const g = ctx.createLinearGradient(0, y, 0, y + h); g.addColorStop(0, T.sky[0]); g.addColorStop(1, T.sky[1]); ctx.fillStyle = g; ctx.fill();
-        ctx.lineWidth = name === K.THEME.name ? 10 : 5; ctx.strokeStyle = name === K.THEME.name ? '#ffd23f' : T.ink; ctx.stroke();
-        ['red', 'yellow', 'green', 'blue'].forEach((c, k) => { ctx.beginPath(); ctx.arc(x + w * (0.2 + k * 0.2), y + h * 0.42, 26, 0, TAU); ctx.fillStyle = T.colors[c][1]; ctx.fill(); ctx.lineWidth = 4; ctx.strokeStyle = T.ink; ctx.stroke(); });
-        K.draw.text(name, x + w / 2, y + h * 0.78, { size: 36 });
-      },
-      onItem: name => { K.setTheme(name); SAVE.theme = name; K.save.commit(); K.ui.toast('Theme: ' + name, { icon: 'star' }); } }));
-    this.groups.forEach((g, k) => g.forEach(w => { w.visible = k === 0; }));
-  },
-  backdrop: skyBackdrop,
-  hud() {
-    const v = K.view;
-    K.draw.pill(v.w - 140 - v.safe.right, 70 + v.safe.top, K.fmt(K.meta.wallet.get('coins')), { icon: 'coin', size: 34, minW: 190 });
-    if (this.tab === 1) {
-      const y0 = 250 + v.safe.top;
-      K.draw.text('Track', v.w / 2, y0 + 640, { size: 32, sw: 5 });
-      K.draw.text('now playing: ' + (K.music.playing || '—'), v.w / 2, y0 + 790, { size: 26, sw: 4 });
+/* ---------- 3c. PRESENTATION HELPERS (read-only views of the sim) ---------- */
+let runCount = 0;
+const T = () => K.time;
+function award(id) {
+  if (SAVE.ach[id]) return;
+  SAVE.ach[id] = 1; K.save.later();
+  const a = ACH.find(x => x.id === id);
+  K.ui.toast('Award: ' + a.name, { icon: 'trophy', iconColor: '#ffe600', dur: 2.4 });
+  K.audio.play('award');
+}
+function ownedCount() { return SKINS.filter(k => K.meta.unlocks.has(k.id)).length; }
+function grantSkin(id) {
+  if (K.meta.unlocks.grant(id)) {
+    K.ui.toast('New critter: ' + skinById(id).name + '!', { icon: 'star', iconColor: skinById(id).col, dur: 2.6 });
+    K.audio.play('levelup');
+    if (ownedCount() >= 4) award('skins4');
+  }
+}
+function checkMilestones(s) {
+  if (s.reached >= 20) grantSkin('comet');
+  if (s.galaxy >= 3) grantSkin('astro');
+  if (s.maxCombo >= 8) grantSkin('void');
+}
+
+/* ---- audio ---- */
+K.audio.define('hop', () => { K.audio.tone({ wave: 'triangle', f0: 280, f1: 820, dur: 0.13, vol: 0.22 }); K.audio.tone({ noise: true, dur: 0.16, vol: 0.07, hp: 2500, attack: 0.02 }); });
+K.audio.define('capture', (p = 1) => { K.audio.tone({ wave: 'sine', f0: 523 * p, dur: 0.16, vol: 0.2 }); K.audio.tone({ wave: 'triangle', f0: 784 * p, dur: 0.2, vol: 0.12, delay: 0.05 }); });
+K.audio.define('perfect', (n = 1) => { const b = 523 * Math.pow(2, Math.min(n, 12) / 12); [1, 1.25, 1.5, 2].forEach((m, i) => K.audio.tone({ wave: 'sine', f0: b * m, dur: 0.25, vol: 0.16, delay: i * 0.045 })); });
+K.audio.define('dust', (p = 1) => K.audio.tone({ wave: 'sine', f0: 1500 * p, f1: 2300 * p, dur: 0.08, vol: 0.12 }));
+K.audio.define('warp', () => { K.audio.tone({ wave: 'sawtooth', f0: 220, f1: 1500, dur: 0.32, vol: 0.12, filter: 3200 }); K.audio.tone({ noise: true, dur: 0.3, vol: 0.12, hp: 1500 }); });
+K.audio.define('lost', () => K.audio.tone({ wave: 'triangle', f0: 620, f1: 110, dur: 0.9, vol: 0.25 }));
+K.audio.define('suck', () => { K.audio.tone({ wave: 'sine', f0: 420, f1: 35, dur: 1.0, vol: 0.35 }); K.audio.tone({ noise: true, dur: 0.8, vol: 0.2, filter: 500, attack: 0.2 }); });
+K.audio.define('award', () => [784, 988, 1319].forEach((f, i) => K.audio.tone({ wave: 'triangle', f0: f, dur: 0.22, vol: 0.14, delay: i * 0.07 })));
+
+/* ---- music: chill, menu quieter than gameplay ---- */
+(() => {
+  const hold = (n, len) => [n].concat(Array(len - 1).fill('-')).join(' ');
+  const bars = f => ['A', 'F', 'C', 'G'].map(f).join(' ');
+  const arp = { A: 'A4 . C5 . E5 . A5 . E5 . C5 . E5 . . .', F: 'F4 . A4 . C5 . F5 . C5 . A4 . C5 . . .', C: 'C5 . E5 . G5 . C6 . G5 . E5 . G5 . . .', G: 'G4 . B4 . D5 . G5 . D5 . B4 . D5 . . .' };
+  const root = { A: 'A2', F: 'F2', C: 'C3', G: 'G2' }, p1 = { A: 'A3', F: 'F3', C: 'C4', G: 'G3' }, p2 = { A: 'E4', F: 'C4', C: 'G4', G: 'D4' };
+  K.music.define('orbitPlay', { bpm: 92, tracks: [
+    { inst: 'kick', p: 'x . . . . . . . x . . x . . . .', v: 0.8 },
+    { inst: 'snare', p: '. . . . x . . . . . . . x . . .', v: 0.35 },
+    { inst: 'hat', p: '. . x . . . x . . . x . . x x .', v: 0.35 },
+    { inst: 'bass', p: bars(c => root[c] + ' - - - - - . ' + root[c] + ' . . ' + root[c] + ' - - - . .') },
+    { inst: 'pad', p: bars(c => hold(p1[c], 16)), v: 0.8 },
+    { inst: 'pad', p: bars(c => hold(p2[c], 16)), v: 0.6 },
+    { inst: 'pluck', p: bars(c => arp[c]), v: 0.7 },
+    { inst: 'bell', p: 'E6 . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . G6 . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .', v: 0.4 },
+  ] });
+  K.music.define('orbitMenu', { bpm: 80, tracks: [
+    { inst: 'pad', p: bars(c => hold(p1[c], 16)), v: 0.55 },
+    { inst: 'pad', p: bars(c => hold(p2[c], 16)), v: 0.4 },
+    { inst: 'pluck', p: bars(c => arp[c]), v: 0.35 },
+    { inst: 'bell', p: 'E6 . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . C6 . . . . . . . . . . . . . . . . . . . . . . .', v: 0.3 },
+  ] });
+})();
+
+/* ---- sprites ---- */
+function planetSprite(pl) {
+  const rq = Math.max(20, Math.round(pl.r0 / 3) * 3), col = gal(pl.g).planets[pl.col];
+  const key = 'pl:' + pl.style + ':' + col + ':' + rq + ':' + (pl.ring ? 1 : 0);
+  const W = pl.ring ? rq * 3.4 : rq * 2, H = pl.ring ? rq * 2.2 : rq * 2;
+  return K.draw.sprite(key, W, H, (g) => {
+    const cx = W / 2, cy = H / 2, pal = K.color.pal(col), ink = K.THEME.ink;
+    const ringPath = (a0, a1) => { g.beginPath(); g.ellipse(cx, cy, rq * 1.62, rq * 0.42, -0.32, a0, a1); };
+    if (pl.ring) { ringPath(Math.PI, TAU); g.lineWidth = rq * 0.2; g.strokeStyle = ink; g.stroke(); g.lineWidth = rq * 0.12; g.strokeStyle = K.color.alpha(pal[0], 0.9); g.stroke(); }
+    K.draw.blob(cx, cy, rq, pal, { shine: false, outline: 0 });
+    g.save(); g.beginPath(); g.arc(cx, cy, rq, 0, TAU); g.clip();
+    const dk = K.color.alpha(pal[2], 0.55), lt = K.color.alpha(pal[0], 0.45);
+    if (pl.style === 0) { for (let i = -2; i <= 2; i++) { g.fillStyle = i % 2 ? dk : lt; g.fillRect(cx - rq, cy + i * rq * 0.36 - rq * 0.09, rq * 2, rq * 0.18); } }
+    else if (pl.style === 1) { [[-0.35, -0.3, 0.26], [0.35, 0.15, 0.2], [-0.1, 0.45, 0.15], [0.45, -0.45, 0.12]].forEach(([x, y, r]) => { g.beginPath(); g.arc(cx + x * rq, cy + y * rq, r * rq, 0, TAU); g.fillStyle = dk; g.fill(); g.beginPath(); g.arc(cx + x * rq - r * rq * 0.2, cy + y * rq - r * rq * 0.2, r * rq * 0.7, 0, TAU); g.fillStyle = K.color.alpha(pal[1], 0.8); g.fill(); }); }
+    else if (pl.style === 2) { g.beginPath(); g.ellipse(cx + rq * 0.25, cy + rq * 0.2, rq * 0.38, rq * 0.22, -0.2, 0, TAU); g.fillStyle = dk; g.fill(); g.beginPath(); g.ellipse(cx + rq * 0.25, cy + rq * 0.2, rq * 0.2, rq * 0.1, -0.2, 0, TAU); g.fillStyle = lt; g.fill(); g.fillStyle = dk; g.fillRect(cx - rq, cy - rq * 0.45, rq * 2, rq * 0.14); }
+    else { g.fillStyle = 'rgba(255,255,255,0.55)'; g.beginPath(); g.ellipse(cx, cy - rq * 0.95, rq * 0.75, rq * 0.32, 0, 0, TAU); g.fill(); g.beginPath(); g.ellipse(cx, cy + rq, rq * 0.6, rq * 0.25, 0, 0, TAU); g.fill(); }
+    g.beginPath(); g.arc(cx + rq * 0.35, cy + rq * 0.35, rq * 1.05, 0, TAU); g.fillStyle = 'rgba(0,0,0,0.0)'; g.fill();
+    const sh = g.createRadialGradient(cx - rq * 0.4, cy - rq * 0.4, rq * 0.2, cx, cy, rq * 1.05); sh.addColorStop(0, 'rgba(255,255,255,0.12)'); sh.addColorStop(0.7, 'rgba(0,0,0,0)'); sh.addColorStop(1, 'rgba(0,0,10,0.45)');
+    g.fillStyle = sh; g.fillRect(cx - rq, cy - rq, rq * 2, rq * 2);
+    g.restore();
+    g.beginPath(); g.arc(cx, cy, rq, 0, TAU); g.lineWidth = Math.max(4, rq * 0.08); g.strokeStyle = ink; g.stroke();
+    g.beginPath(); g.ellipse(cx - rq * 0.38, cy - rq * 0.45, rq * 0.26, rq * 0.13, -0.6, 0, TAU); g.fillStyle = 'rgba(255,255,255,0.6)'; g.fill();
+    if (pl.ring) { ringPath(0, Math.PI); g.lineWidth = rq * 0.2; g.strokeStyle = ink; g.stroke(); g.lineWidth = rq * 0.12; g.strokeStyle = K.color.alpha(pal[0], 0.95); g.stroke(); }
+  }, { pad: 46 });
+}
+function dustSprite() {
+  return K.draw.sprite('dust', 44, 44, () => { K.draw.glow(22, 22, 30, '#fff3a0', 0.6); K.draw.star(22, 22, 19, '#fff6b0', { points: 4, inner: 0.38, outline: 3 }); K.draw.star(22, 22, 9, '#ffffff', { points: 4, inner: 0.45, outline: 0 }); }, { pad: 12 });
+}
+function rockSprite(v, r) {
+  const rq = Math.round(r / 4) * 4;
+  return K.draw.sprite('rock:' + v + ':' + rq, rq * 2, rq * 2, (g) => {
+    const rr = K.rng(v * 31 + rq), pts = [];
+    for (let i = 0; i < 9; i++) { const a = i / 9 * TAU, d = rq * rr.range(0.78, 1); pts.push(rq + Math.cos(a) * d, rq + Math.sin(a) * d); }
+    K.draw.poly(pts, '#6d5a8f', { outline: 5 });
+    g.fillStyle = '#4a3a66'; [[0.7, 0.8, 0.22], [1.3, 1.1, 0.16], [0.95, 1.35, 0.12]].forEach(([x, y, s]) => { g.beginPath(); g.arc(x * rq, y * rq, s * rq, 0, TAU); g.fill(); });
+    g.fillStyle = 'rgba(255,255,255,0.25)'; g.beginPath(); g.ellipse(rq * 0.75, rq * 0.6, rq * 0.3, rq * 0.14, -0.6, 0, TAU); g.fill();
+  }, { pad: 8 });
+}
+function nebulaSprite(c) {
+  return K.draw.sprite('neb:' + c, 520, 520, (g) => {
+    for (let i = 0; i < 3; i++) {
+      const x = 260 + (i - 1) * 70, y = 260 + (i % 2 ? 50 : -40), r = 220 - i * 30;
+      const gr = g.createRadialGradient(x, y, 0, x, y, r); gr.addColorStop(0, K.color.alpha(c, 0.22)); gr.addColorStop(1, K.color.alpha(c, 0));
+      g.fillStyle = gr; g.fillRect(0, 0, 520, 520);
     }
+  }, { pad: 0, res: 0.5 });
+}
+
+/* ---- the hero ---- */
+function drawCritter(skin, x, y, r, o = {}) {
+  const g = o.ctx;
+  g.save(); g.translate(x, y); g.rotate(o.rot || 0); g.scale(o.sx || 1, o.sy || 1);
+  const pal = K.color.pal(skin.col), ink = K.THEME.ink, t = o.t != null ? o.t : T();
+  // behind-body accessories
+  if (skin.acc === 'ears') { for (const sx of [-1, 1]) { K.draw.poly([sx * r * 0.95, -r * 0.2, sx * r * 0.95, -r * 1.45, sx * r * 0.2, -r * 0.88], pal[1], { outline: 5 }); K.draw.poly([sx * r * 0.8, -r * 0.5, sx * r * 0.82, -r * 1.12, sx * r * 0.42, -r * 0.85], '#ffd1ee', { outline: 0 }); } }
+  if (skin.acc === 'antenna') { K.draw.line([0, -r * 0.8, r * 0.15, -r * 1.45], ink, 4, { outline: 0 }); K.draw.blob(r * 0.17, -r * 1.5, r * 0.22, ['#ffffff', '#ff2e63', '#a8002f'], { outline: 3 }); }
+  if (skin.acc === 'stalks') { for (const sx of [-1, 1]) { K.draw.line([sx * r * 0.35, -r * 0.7, sx * r * 0.6, -r * 1.35], pal[1], 7, { outline: 4 }); K.draw.blob(sx * r * 0.62, -r * 1.42, r * 0.26, ['#ffffff', '#ffffff', '#c8c8d8'], { outline: 3, shine: false, glow: false }); g.beginPath(); g.arc(sx * r * 0.62, -r * 1.4, r * 0.11, 0, TAU); g.fillStyle = ink; g.fill(); } }
+  if (skin.acc === 'saucer') { g.beginPath(); g.ellipse(0, r * 0.25, r * 1.55, r * 0.42, 0, Math.PI, TAU); g.lineWidth = 9; g.strokeStyle = ink; g.stroke(); g.lineWidth = 5; g.strokeStyle = '#e0e3ff'; g.stroke(); }
+  if (skin.acc === 'flame') { const f = 1 + 0.15 * Math.sin(t * 30); K.draw.poly([-r * 0.6, r * 0.3, 0, r * (1.9 * f), r * 0.6, r * 0.3], '#ff2e63', { outline: 4 }); K.draw.poly([-r * 0.35, r * 0.4, 0, r * (1.4 * f), r * 0.35, r * 0.4], '#ffe600', { outline: 0 }); }
+  K.draw.critter(0, 0, r, pal, { mood: o.mood, look: o.look });
+  // front accessories
+  if (skin.acc === 'saucer') { g.beginPath(); g.ellipse(0, r * 0.25, r * 1.55, r * 0.42, 0, 0, Math.PI); g.lineWidth = 9; g.strokeStyle = ink; g.stroke(); g.lineWidth = 5; g.strokeStyle = '#e0e3ff'; g.stroke(); for (let i = 0; i < 5; i++) { const a = (i / 5 + t * 0.6) % 1 * Math.PI; g.beginPath(); g.arc(Math.cos(a) * r * 1.4, r * 0.25 + Math.sin(a) * r * 0.38, 4, 0, TAU); g.fillStyle = i % 2 ? '#ffe600' : '#22ff88'; g.fill(); } }
+  if (skin.acc === 'helmet') { g.beginPath(); g.arc(0, 0, r * 1.22, 0, TAU); g.fillStyle = 'rgba(160,230,255,0.18)'; g.fill(); g.lineWidth = 5; g.strokeStyle = ink; g.stroke(); g.lineWidth = 3; g.strokeStyle = 'rgba(200,240,255,0.8)'; g.stroke(); g.beginPath(); g.ellipse(-r * 0.5, -r * 0.6, r * 0.32, r * 0.14, -0.7, 0, TAU); g.fillStyle = 'rgba(255,255,255,0.7)'; g.fill(); }
+  if (skin.acc === 'crown') { K.draw.poly([-r * 0.55, -r * 0.75, -r * 0.6, -r * 1.25, -r * 0.28, -r * 1.0, 0, -r * 1.4, r * 0.28, -r * 1.0, r * 0.6, -r * 1.25, r * 0.55, -r * 0.75], '#ffe600', { outline: 4 }); g.beginPath(); g.arc(0, -r * 1.05, r * 0.1, 0, TAU); g.fillStyle = '#ff2e63'; g.fill(); }
+  if (o.mood === 'happy' || o.mood == null) { g.globalAlpha = 0.45; g.fillStyle = '#ff7ab8'; g.beginPath(); g.ellipse(-r * 0.52, r * 0.28, r * 0.14, r * 0.08, 0, 0, TAU); g.ellipse(r * 0.52, r * 0.28, r * 0.14, r * 0.08, 0, 0, TAU); g.fill(); g.globalAlpha = 1; }
+  g.restore();
+}
+
+/* ---- world backdrop ---- */
+const STARS = (() => { const r = K.rng(99), a = []; for (let i = 0; i < 150; i++) a.push({ x: r.range(0, 1400), y: r.range(0, 1800), s: r.range(1.2, 3.6), l: i % 3, tw: r.range(0, TAU) }); return a; })();
+function spaceBackdrop(ctx, gi, camY) {
+  const v = K.view, G0 = gal(Math.floor(gi)), G1 = gal(Math.floor(gi) + 1), f = gi - Math.floor(gi);
+  const top = f > 0 ? K.color.mix(G0.sky[0], G1.sky[0], f) : G0.sky[0], bot = f > 0 ? K.color.mix(G0.sky[1], G1.sky[1], f) : G0.sky[1];
+  K.draw.sky(top, bot);
+  const x0 = -v.ox, W = v.fullW;
+  // nebulae (slow parallax)
+  const nb = [G0.neb[0], G0.neb[1]];
+  for (let i = 0; i < 4; i++) {
+    const py = M.wrap(i * 520 - camY * 0.06, 2080) - 520, px = x0 + M.wrap(i * 430 + 120, W + 300) - 300;
+    ctx.globalAlpha = 1 - f * 0.6;
+    K.draw.drawSprite(nebulaSprite(nb[i % 2]), px, py, { scale: 1.6 });
+    if (f > 0) { ctx.globalAlpha = f; K.draw.drawSprite(nebulaSprite(G1.neb[i % 2]), px, py, { scale: 1.6 }); }
+  }
+  ctx.globalAlpha = 1;
+  // star layers
+  const par = [0.04, 0.12, 0.25], t = T();
+  for (const st of STARS) {
+    const y = M.wrap(st.y - camY * par[st.l], 1800) - 260;
+    if (y > v.h + v.oy + 10) continue;
+    const x = x0 + M.wrap(st.x, 1400) * (W / 1400);
+    ctx.globalAlpha = 0.45 + 0.4 * Math.sin(t * 2 + st.tw) * (st.l === 0 ? 1 : 0.3) + st.l * 0.1;
+    ctx.fillStyle = st.l === 2 ? '#ffffff' : st.l === 1 ? '#cfe8ff' : '#ffe9ff';
+    const s = st.s * (0.6 + st.l * 0.35);
+    ctx.fillRect(x - s / 2, y - s / 2, s, s);
+    if (st.l === 2 && st.s > 3.2) { ctx.fillRect(x - s * 2, y - 0.6, s * 4, 1.2); ctx.fillRect(x - 0.6, y - s * 2, 1.2, s * 4); }
+  }
+  ctx.globalAlpha = 1;
+}
+
+function holeSprite() {
+  return K.draw.sprite('hole', 320, 320, (g) => {
+    const c = 160, gr = g.createRadialGradient(c, c, 30, c, c, 160);
+    gr.addColorStop(0, 'rgba(180,76,255,0.6)'); gr.addColorStop(0.55, 'rgba(255,60,199,0.18)'); gr.addColorStop(1, 'rgba(180,76,255,0)');
+    g.fillStyle = gr; g.fillRect(0, 0, 320, 320);
+    const cols = ['#ff3cc7', '#ffe600', '#22d3ff', '#b44cff'];
+    g.lineCap = 'round';
+    for (let arm = 0; arm < 4; arm++) {
+      g.beginPath();
+      for (let k = 0; k <= 40; k++) { const f = k / 40, a = arm * TAU / 4 + f * 4.4, r = 128 - f * 86; const x = c + Math.cos(a) * r, y = c + Math.sin(a) * r; k ? g.lineTo(x, y) : g.moveTo(x, y); }
+      g.lineWidth = 12; g.strokeStyle = K.THEME.ink; g.stroke(); g.lineWidth = 7; g.strokeStyle = cols[arm]; g.stroke();
+    }
+    g.beginPath(); g.arc(c, c, HOLE_KILL + 2, 0, TAU); g.fillStyle = '#000000'; g.fill(); g.lineWidth = 6; g.strokeStyle = '#ebc4ff'; g.stroke();
+  }, { pad: 0 });
+}
+function drawHole(ctx, ho, t) {
+  ctx.save(); ctx.setLineDash([12, 18]); ctx.lineDashOffset = t * 40; ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(235,196,255,0.35)';
+  ctx.beginPath(); ctx.arc(ho.x, ho.y, 230, 0, TAU); ctx.stroke(); ctx.restore();
+  K.draw.drawSprite(holeSprite(), ho.x, ho.y, { rot: -t * 1.8 });
+}
+function drawRing(ctx, rg, t) {
+  const s = 1 + 0.06 * Math.sin(t * 6);
+  ctx.save(); ctx.translate(rg.x, rg.y); ctx.scale(s, s);
+  ctx.beginPath(); ctx.arc(0, 0, 54, 0, TAU); ctx.lineWidth = 16; ctx.strokeStyle = K.THEME.ink; ctx.stroke();
+  ctx.shadowColor = '#22ff88'; ctx.shadowBlur = 20; ctx.lineWidth = 9; ctx.strokeStyle = '#22ff88'; ctx.stroke(); ctx.shadowBlur = 0;
+  ctx.setLineDash([10, 14]); ctx.lineDashOffset = -t * 60; ctx.lineWidth = 3; ctx.strokeStyle = '#ffffff'; ctx.beginPath(); ctx.arc(0, 0, 40, 0, TAU); ctx.stroke(); ctx.setLineDash([]);
+  K.draw.icon('bolt', 0, 0, 40, '#b0ffd0');
+  ctx.restore();
+}
+function drawPlanet(ctx, pl, t, x) {
+  const sp = planetSprite(pl), sc = plR(pl, t) / Math.max(20, Math.round(pl.r0 / 3) * 3);
+  K.draw.drawSprite(sp, x, pl.y, { scale: sc, rot: pl.ring ? 0 : t * pl.spin });
+}
+
+/* ---------- 3d. SCENES ---------- */
+function headerPills() {
+  const v = K.view;
+  K.draw.pill(150 + v.safe.left, 70 + v.safe.top, K.fmt(K.meta.wallet.get('dust')), { icon: 'star', iconColor: '#fff6b0', size: 34, minW: 190 });
+}
+
+K.scenes.add('title', {
+  music: 'orbitMenu',
+  enter() {
+    this.logo = { s: 0 }; K.tween(this.logo, { s: 1 }, 0.7, K.Ease.outBack);
+    this.pl = { r0: 120, style: 0, col: 1, g: 0, ring: true, pulse: 0, spin: 0 };
+    K.ui.button({ label: 'PLAY', icon: 'play', color: 'green', w: 430, h: 136, pulse: true, key: 'action', popIn: 0.25,
+      place: v => ({ x: v.w / 2, y: v.h * 0.69 }), onTap: () => K.scenes.go('play') });
+    K.ui.button({ label: 'CRITTERS', icon: 'star', color: 'purple', w: 300, h: 104, popIn: 0.32, badge: this.affordable() ? '!' : null,
+      place: v => ({ x: v.w / 2 - 160, y: v.h * 0.69 + 150 }), onTap: () => K.scenes.go('skins') });
+    K.ui.button({ label: 'AWARDS', icon: 'trophy', color: 'orange', w: 300, h: 104, popIn: 0.38,
+      place: v => ({ x: v.w / 2 + 160, y: v.h * 0.69 + 150 }), onTap: () => K.scenes.go('awards') });
+    K.ui.soundButton({ w: 96, h: 96, popIn: 0.44, place: v => ({ x: v.w / 2 - 60, y: v.h * 0.69 + 275 }) });
+    K.ui.musicButton({ w: 96, h: 96, popIn: 0.48, place: v => ({ x: v.w / 2 + 60, y: v.h * 0.69 + 275 }) });
+  },
+  affordable() { return SKINS.some(k => k.cost && !K.meta.unlocks.has(k.id) && K.meta.wallet.can('dust', k.cost)); },
+  backdrop(ctx) { spaceBackdrop(ctx, 0, K.time * 30); },
+  render(ctx) {
+    const v = K.view, t = K.time, cx = v.w / 2, cy = v.h * 0.47;
+    const skin = skinById(K.meta.unlocks.selected('skin', 'blip'));
+    ctx.save(); ctx.setLineDash([6, 16]); ctx.lineWidth = 4; ctx.strokeStyle = 'rgba(255,255,255,0.3)';
+    ctx.beginPath(); ctx.arc(cx, cy, 200, 0, TAU); ctx.stroke(); ctx.restore();
+    const a = t * 1.3;
+    for (let i = 1; i < 14; i++) { const b = a - i * 0.07; ctx.globalAlpha = 0.5 * (1 - i / 14); ctx.beginPath(); ctx.arc(cx + Math.cos(b) * 200, cy + Math.sin(b) * 200, 14 - i * 0.7, 0, TAU); ctx.fillStyle = skin.trail; ctx.fill(); }
+    ctx.globalAlpha = 1;
+    const behind = Math.sin(a) < -0.2;
+    const hero = () => drawCritter(skin, cx + Math.cos(a) * 200, cy + Math.sin(a) * 200, 52, { ctx, rot: a + Math.PI / 2, mood: ((t % 3.2) < 0.12) ? 'blink' : 'happy' });
+    if (behind) hero();
+    this.pl.y = cy; drawPlanet(ctx, this.pl, t, cx);
+    if (!behind) hero();
+  },
+  hud(ctx) {
+    const v = K.view;
+    headerPills();
+    K.draw.pill(v.w - 150 - v.safe.right, 70 + v.safe.top, 'BEST ' + K.fmt(SAVE.best), { icon: 'trophy', size: 30, minW: 220 });
+    ctx.save(); ctx.translate(v.w / 2, 255 + v.safe.top + Math.sin(K.time * 2) * 8); ctx.scale(this.logo.s, this.logo.s); ctx.rotate(-0.06);
+    K.draw.text('ORBIT', 0, -62, { size: 150, color: '#7ae8ff', sw: 16 });
+    K.draw.text('HOP', 30, 72, { size: 160, color: '#ff7ad1', sw: 16 });
+    ctx.restore();
   },
 });
 
-K.boot('hub');
+K.scenes.add('play', {
+  gameplay: true, pausable: true, music: 'orbitPlay', touch: null,
+  enter(p) {
+    if (p.resume) { this.run = p.resume; Sim.revive(this.run.s); award('cont'); }
+    else { this.run = { s: Sim.create((Math.random() * 2 ** 31) | 0), banked: 0 }; SAVE.stats.runs++; runCount++; K.save.later(); if (SAVE.stats.runs >= 10) award('runs10'); }
+    const s = this.run.s;
+    this.skin = skinById(K.meta.unlocks.selected('skin', 'blip'));
+    this.cam = { x: 360, y: Sim.pl(s, s.cur).y - K.view.h * 0.21 };
+    K.camera.follow(this.cam, { lerp: 5, snap: true });
+    this.fxScore = { s: 1 }; this.sq = { x: 1, y: 1 }; this.rot = 0;
+    this.win = null; this.winT = 0; this.aim = null; this.dots = [];
+    this.deadT = -1; this.galShown = s.galaxy; this.galFx = { t0: -99, g: s.galaxy }; this.galBlend = s.galaxy;
+    this.dustStreak = 0; this.dustT = 0;
+    K.ui.pauseButton();
+    K.audio.play('whoosh');
+  },
+  onQuit() { this.bank(); K.save.commit(); K.scenes.go('title'); },
+  bank() { const s = this.run.s, n = s.dustRun - this.run.banked; if (n > 0) { K.meta.wallet.add('dust', n); this.run.banked = s.dustRun; } },
+  update(dt) {
+    const s = this.run.s, ptr = K.input.pointer;
+    const tap = ptr.pressed || K.input.pressed('action') || K.input.pressed('up');
+    Sim.step(s, dt, { tap });
+    for (const e of s.events) this.present(e);
+    s.events.length = 0;
+    if (this.deadT >= 0) { this.deadT += dt; if (this.deadT > 1.15) { this.deadT = -99; this.bank(); K.scenes.go('over', { run: this.run }); } }
+  },
+  present(e) {
+    const s = this.run.s, v = K.view, sk = this.skin;
+    switch (e.type) {
+      case 'jump':
+        K.audio.play('hop'); K.haptic('light');
+        K.fx.burst(e.x, e.y, { count: 10, colors: [sk.trail, '#ffffff'], speed: [80, 260], angle: Math.atan2(-e.vy, -e.vx), spread: 1.4, gravity: 0, size: [4, 9], outline: false });
+        K.tween.killOf(this.sq); this.sq.x = 0.72; this.sq.y = 1.35; K.tween(this.sq, { x: 1, y: 1 }, 0.5, K.Ease.outElastic);
+        break;
+      case 'land': {
+        K.tween.killOf(this.sq); this.sq.x = 1.3; this.sq.y = 0.74; K.tween(this.sq, { x: 1, y: 1 }, 0.55, K.Ease.outElastic);
+        K.fx.ring(e.cx, e.cy, { r0: e.r, r1: e.r + 120, color: e.perfect ? '#ffe600' : '#7ae8ff', width: 12 });
+        K.fx.burst(e.x, e.y, { count: 12, colors: [sk.col, sk.trail, '#ffffff'], speed: [120, 380], gravity: 0, size: [4, 10] });
+        if (!e.fresh) { K.audio.play('capture', 0.8); break; }
+        SAVE.stats.hops++; award('first');
+        if (SAVE.tut < 3) SAVE.tut++;
+        if (e.perfect) {
+          K.audio.play('perfect', e.combo); K.haptic('success'); K.fx.flash('#fff6b0', 0.18); K.fx.hitstop(0.05);
+          K.fx.burst(e.cx, e.cy, { shape: 'star', colors: ['#ffe600', '#fff6b0', '#ffffff'], count: 14 + Math.min(e.combo, 10) * 2, speed: [250, 700], size: [8, 15], gravity: 0 });
+          K.fx.text(v.w / 2, v.h * 0.36, e.combo > 1 ? 'PERFECT x' + Math.min(e.combo + 1, 8) : 'PERFECT!', { size: 64 + Math.min(e.combo, 6) * 6, color: '#ffe600', screen: true, life: 1.0, rise: 70 });
+          SAVE.stats.perfects++; SAVE.stats.dust++; award('perfect');
+          if (e.combo >= 5) award('combo5');
+          SAVE.stats.bestCombo = Math.max(SAVE.stats.bestCombo, e.combo);
+        } else { K.audio.play('capture', 1 + Math.min(s.reached, 40) * 0.01); K.haptic('light'); }
+        K.fx.text(e.cx, e.cy - e.r - 50, '+' + e.pts, { size: 46, color: e.perfect ? '#ffe600' : '#ffffff' });
+        if (e.skip > 0) K.fx.text(e.cx, e.cy - e.r - 110, 'SKIP!', { size: 52, color: '#22ff88' });
+        if (e.bent) award('hole');
+        K.tween.killOf(this.fxScore); this.fxScore.s = 1.3; K.tween(this.fxScore, { s: 1 }, 0.4, K.Ease.outElastic);
+        if (e.newGal) {
+          K.audio.play('levelup'); K.fx.flash(gal(e.g).neb[0], 0.35); this.galFx = { t0: K.time, g: e.g };
+          K.tween(this, { galBlend: e.g }, 2.2, K.Ease.inOutCubic);
+          if (e.g > SAVE.maxGalaxy) SAVE.maxGalaxy = e.g;
+          award('gal2');
+        }
+        if (s.reached > SAVE.bestPlanet) SAVE.bestPlanet = s.reached;
+        if (s.reached >= 25) award('p25');
+        if (s.reached >= 60) award('p60');
+        if (s.score >= 1000) award('score1k');
+        checkMilestones(s);
+        K.save.later();
+        break;
+      }
+      case 'dust': {
+        this.dustStreak = this.dustT > 0 ? this.dustStreak + 1 : 0; this.dustT = 0.6;
+        K.audio.play('dust', 1 + Math.min(this.dustStreak, 8) * 0.08);
+        K.fx.burst(e.x, e.y, { shape: 'star', colors: ['#fff6b0', '#ffe600'], count: 8, speed: [120, 320], size: [5, 10], gravity: 0 });
+        K.fx.text(e.x, e.y - 20, '+1', { size: 34, color: '#fff6b0', rise: 70, life: 0.6 });
+        SAVE.stats.dust++; if (SAVE.stats.dust >= 100) award('dust100');
+        break;
+      }
+      case 'warp':
+        K.audio.play('warp'); K.haptic('medium'); K.fx.shake(8, 0.2);
+        K.fx.ring(e.x, e.y, { r0: 50, r1: 170, color: '#22ff88', width: 14 });
+        K.fx.text(e.x, e.y - 60, 'WARP +15', { size: 44, color: '#22ff88' });
+        SAVE.stats.warps++; if (SAVE.stats.warps >= 5) award('warp');
+        break;
+      case 'belt':
+        SAVE.stats.belts++; if (SAVE.stats.belts >= 10) award('belt');
+        K.fx.text(s.p.x, s.p.y + 60, 'DODGE!', { size: 36, color: '#c4b5ff', rise: 60, life: 0.6 });
+        break;
+      case 'dead':
+        this.deadT = 0;
+        if (e.cause === 'rock') { K.audio.play('explode'); K.fx.shake(24, 0.45); K.fx.hitstop(0.1); K.fx.flash('#ff2e63', 0.4); K.haptic('heavy'); K.fx.burst(e.x, e.y, { shape: 'square', colors: ['#6d5a8f', '#ff2e63', sk.col], count: 26, speed: [250, 750], gravity: 300 }); }
+        else if (e.cause === 'hole') { K.audio.play('suck'); K.fx.shake(14, 0.8); K.fx.flash('#b44cff', 0.35); K.haptic('heavy'); }
+        else { K.audio.play('lost'); K.fx.shake(6, 0.3); K.haptic('fail'); }
+        K.save.later();
+        break;
+    }
+  },
+  frame(dt) {
+    const s = this.run.s, p = s.p, v = K.view;
+    this.dustT -= dt;
+    // camera: keep the current planet in the lower third; rise with the critter in flight
+    const cur = Sim.pl(s, s.cur);
+    let fy = cur.y;
+    if (s.mode === 'fly') fy = Math.min(cur.y, p.y + 120);
+    if (s.mode !== 'dead') this.cam.y = fy - v.h * 0.21;
+    // hero rotation
+    const target = s.mode === 'orbit' ? p.ang + Math.PI / 2 : s.mode === 'fly' ? Math.atan2(p.vy, p.vx) + Math.PI / 2 : this.rot + dt * 8;
+    this.rot += M.angleDiff(this.rot, target) * Math.min(1, dt * (s.mode === 'orbit' ? 20 : 12));
+    if (s.mode === 'fly') {
+      K.fx.trail(p.x, p.y, { color: this.skin.trail, size: [7, 12], life: [0.25, 0.45] });
+      if (this.skin.shape && Math.random() < 0.4) K.fx.burst(p.x, p.y, { count: 1, shape: this.skin.shape, colors: [this.skin.trail], speed: [10, 60], gravity: 0, size: [5, 9], life: [0.3, 0.5] });
+    }
+    // trajectory prediction (pure reads)
+    this.aimTick = (this.aimTick || 0) + 1;
+    if (s.mode !== 'orbit') { this.dots.length = 0; this.aim = null; }
+    else if (this.aimTick % 2 === 0 || !this.aim) {
+      const k = diffK(s.reached);
+      this.dots.length = 0;
+      this.aim = Sim.trace(s, p.ang + p.dir * Sim.pl(s, s.cur).w / 60, p.rad, s.t + 1 / 60, 2.6, this.dots, M.lerp(1050, 430, k));
+    }
+    if (s.mode === 'orbit') {
+      this.winT -= dt;
+      if (this.winT <= 0 || !this.win || this.win.cur !== s.cur) { this.winT = 0.1; this.win = this.computeWindow(s); }
+    }
+  },
+  computeWindow(s) {
+    const p = s.p, pl = Sim.pl(s, s.cur), N = 72, arr = new Uint8Array(N);
+    for (let k = 0; k < N; k++) {
+      const a = k / N * TAU, da = M.wrap((a - p.ang) * p.dir, TAU), tl = s.t + da / pl.w;
+      const r = Sim.trace(s, a, p.radT, tl, 1.8, null, 0);
+      arr[k] = r.type === 'land' && r.i > s.cur ? (r.perfect ? 2 : 1) : 0;
+    }
+    return { cur: s.cur, arr, N };
+  },
+  backdrop(ctx) { spaceBackdrop(ctx, this.galBlend, K.camera.y); },
+  render(ctx, a) {
+    const s = this.run.s, t = s.t - (1 - a) / 60, rc = K.camera.rect, p = s.p;
+    for (const ho of s.holes) if (ho.y > rc.y0 - 200 && ho.y < rc.y1 + 200) drawHole(ctx, ho, t);
+    for (const rg of s.rings) if (rg.y > rc.y0 - 80 && rg.y < rc.y1 + 80) drawRing(ctx, rg, t);
+    const ds = dustSprite();
+    for (const d of s.dust) if (!d.taken && d.y > rc.y0 - 40 && d.y < rc.y1 + 40) K.draw.drawSprite(ds, d.x, d.y + Math.sin(t * 3 + d.id) * 5, { rot: Math.sin(t * 2 + d.id) * 0.3 });
+    const cur = Sim.pl(s, s.cur), tgt = Sim.pl(s, s.cur + 1);
+    const inWin = this.aim && this.aim.type === 'land' && this.aim.i > s.cur;
+    // planets + rings
+    for (const pl of s.planets) {
+      if (pl.y < rc.y0 - 250 || pl.y > rc.y1 + 250) continue;
+      const x = plX(pl, t);
+      if (pl === tgt && s.mode !== 'dead') {
+        const R = capR(pl, t), gl = inWin ? (this.aim.perfect ? '#ffe600' : '#22ff88') : null;
+        ctx.save();
+        if (gl) { ctx.lineWidth = 22; ctx.strokeStyle = gl; ctx.globalAlpha = 0.3; ctx.beginPath(); ctx.arc(x, pl.y, R, 0, TAU); ctx.stroke(); ctx.lineWidth = 9 + 3 * Math.sin(K.time * 20); ctx.globalAlpha = 0.95; }
+        else { ctx.setLineDash([10, 14]); ctx.lineDashOffset = K.time * 30; ctx.lineWidth = 4; ctx.strokeStyle = 'rgba(255,255,255,0.35)'; }
+        ctx.beginPath(); ctx.arc(x, pl.y, R, 0, TAU); ctx.stroke(); ctx.restore();
+        if (gl) K.draw.glow(x, pl.y, R * 1.5, gl, 0.25);
+      }
+      if (pl === cur && s.mode === 'orbit') {
+        ctx.save(); ctx.setLineDash([4, 12]); ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(255,255,255,0.28)';
+        ctx.beginPath(); ctx.arc(x, pl.y, orbitR(pl), 0, TAU); ctx.stroke(); ctx.restore();
+        if (this.win && this.win.cur === s.cur) this.drawWindow(ctx, x, pl.y, orbitR(pl));
+      }
+      drawPlanet(ctx, pl, t, x);
+    }
+    for (const bl of s.belts) if (bl.y > rc.y0 - 80 && bl.y < rc.y1 + 80) {
+      const gb = ctx.createLinearGradient(0, bl.y - 60, 0, bl.y + 60); gb.addColorStop(0, 'rgba(160,130,220,0)'); gb.addColorStop(0.5, 'rgba(160,130,220,0.16)'); gb.addColorStop(1, 'rgba(160,130,220,0)');
+      ctx.fillStyle = gb; ctx.fillRect(rc.x0, bl.y - 60, rc.x1 - rc.x0, 120);
+      ctx.fillStyle = 'rgba(200,180,255,0.35)';
+      for (let j = 0; j < 40; j++) { const px = M.wrap(j * 97 + t * 40 * (j % 2 ? 1 : -0.6), 1320) - 300, py = bl.y + ((j * 37) % 70) - 35; ctx.fillRect(px, py, 3 + (j % 3), 3 + (j % 3)); }
+    }
+    for (const rk of s.rocks) if (rk.y > rc.y0 - 60 && rk.y < rc.y1 + 60) K.draw.drawSprite(rockSprite(rk.v, rk.r), rockX(rk, t), rk.y, { rot: t * rk.spin });
+    // predicted path
+    if (this.dots.length > 2) {
+      const col = inWin ? (this.aim.perfect ? '#ffe600' : '#22ff88') : this.aim && this.aim.type === 'dead' && this.aim.cause !== 'lost' ? '#ff6b8a' : '#ffffff';
+      K.draw.dots(this.dots, col, inWin ? 8 : 6);
+    }
+    // hero
+    const x = M.lerp(p.px, p.x, a), y = M.lerp(p.py, p.y, a);
+    const dead = s.mode === 'dead';
+    let look = null;
+    if (tgt && !dead) { const n = M.norm(plX(tgt, t) - x, tgt.y - y), r = M.rotate(n.x, n.y, -this.rot); look = { x: r.x, y: r.y }; }
+    const blink = (K.time % 2.7) < 0.1;
+    const mood = dead ? (s.cause === 'lost' ? 'sad' : 'dead') : s.mode === 'fly' ? null : blink ? 'blink' : 'happy';
+    const sc = dead && s.cause === 'hole' ? Math.max(0.05, 1 - this.deadT * 1.1) : 1;
+    drawCritter(this.skin, x, y, 30 * sc, { ctx, rot: this.rot, sx: this.sq.x, sy: this.sq.y, mood, look });
+  },
+  drawWindow(ctx, cx, cy, R) {
+    const w = this.win, N = w.N, step = TAU / N;
+    ctx.save(); ctx.lineCap = 'round';
+    for (const lvl of [1, 2]) {
+      ctx.lineWidth = lvl === 1 ? 18 : 10; ctx.strokeStyle = lvl === 1 ? 'rgba(34,255,136,0.6)' : 'rgba(255,230,0,0.95)';
+      let k = 0;
+      // find a starting index that is outside a run so wrap-around runs draw as one arc
+      let start = 0; while (start < N && w.arr[start] >= lvl) start++;
+      if (start === N) { ctx.beginPath(); ctx.arc(cx, cy, R, 0, TAU); ctx.stroke(); continue; }
+      for (k = 0; k < N; k++) {
+        const i = (start + k) % N;
+        if (w.arr[i] >= lvl) {
+          let j = 0; while (j < N && w.arr[(i + j) % N] >= lvl) j++;
+          const a0 = i * step - step * 0.5, a1 = (i + j - 1) * step + step * 0.5;
+          ctx.beginPath(); ctx.arc(cx, cy, R, a0, a1); ctx.stroke();
+          k += j - 1;
+        }
+      }
+    }
+    ctx.restore();
+  },
+  hud(ctx) {
+    const s = this.run.s, v = K.view, st = v.safe.top, sb = v.safe.bottom;
+    const gr = ctx.createLinearGradient(0, -v.oy, 0, 260 + st); gr.addColorStop(0, 'rgba(5,3,15,0.65)'); gr.addColorStop(1, 'rgba(5,3,15,0)');
+    ctx.fillStyle = gr; ctx.fillRect(-v.ox, -v.oy, v.fullW, 260 + st + v.oy);
+    const gb = ctx.createLinearGradient(0, v.h - 150 - sb, 0, v.h + v.oy); gb.addColorStop(0, 'rgba(5,3,15,0)'); gb.addColorStop(1, 'rgba(5,3,15,0.6)');
+    ctx.fillStyle = gb; ctx.fillRect(-v.ox, v.h - 150 - sb, v.fullW, 150 + sb + v.oy);
+    K.draw.pill(150 + v.safe.left, 70 + st, K.fmt(K.meta.wallet.get('dust') + s.dustRun - this.run.banked), { icon: 'star', iconColor: '#fff6b0', size: 34, minW: 190 });
+    ctx.save(); ctx.translate(v.w / 2, 150 + st); ctx.scale(this.fxScore.s, this.fxScore.s);
+    K.draw.text(s.score.toLocaleString(), 0, 0, { size: 96, color: '#ffffff', maxW: v.w - 360 }); ctx.restore();
+    if (s.combo > 0) {
+      ctx.save(); ctx.translate(v.w / 2, 228 + st); ctx.rotate(Math.sin(K.time * 6) * 0.05);
+      K.draw.text('x' + Math.min(s.combo + 1, 8) + ' COMBO', 0, 0, { size: 40, color: '#ffe600' }); ctx.restore();
+    }
+    const g = gal(s.galaxy), into = s.reached - s.galaxy * GAL_N, by = v.h - 50 - sb;
+    K.draw.text('PLANET ' + s.reached + '  ·  ' + galName(s.galaxy), v.w / 2, by - 38, { size: 28, sw: 5, color: '#cfe8ff', maxW: v.w - 80 });
+    K.draw.bar(v.w / 2, by, 320, 24, into / GAL_N, [g.neb[0], g.neb[1], g.neb[1]]);
+    // galaxy banner
+    if (K.time - this.galFx.t0 < 2.6 && this.galFx.g > 0) {
+      const tt = K.time - this.galFx.t0, k = tt < 0.3 ? K.Ease.outBack(tt / 0.3) : tt > 2.2 ? 1 - (tt - 2.2) / 0.4 : 1;
+      ctx.save(); ctx.globalAlpha = M.clamp(k, 0, 1); ctx.translate(v.w / 2, v.h * 0.42); ctx.scale(Math.max(0.01, k), Math.max(0.01, k)); ctx.rotate(-0.04);
+      K.draw.text('GALAXY ' + (this.galFx.g + 1), 0, -40, { size: 54, color: '#ffffff' });
+      K.draw.text(galName(this.galFx.g).toUpperCase(), 0, 30, { size: 66, color: gal(this.galFx.g).neb[0], maxW: v.w - 60 });
+      ctx.restore();
+    }
+    // teach by doing: first runs show the tap cue
+    if (SAVE.tut < 3 && s.mode === 'orbit' && this.deadT < 0) {
+      const inWin = this.aim && this.aim.type === 'land' && this.aim.i > s.cur;
+      const y = v.h - 250 - v.safe.bottom, pulse = 1 + 0.12 * Math.sin(K.time * 12);
+      if (inWin) {
+        ctx.save(); ctx.translate(v.w / 2, y); ctx.scale(pulse, pulse);
+        K.draw.text(K.input.touch ? 'TAP!' : 'CLICK!', 0, 0, { size: 96, color: '#22ff88' }); ctx.restore();
+        this.finger(ctx, v.w / 2 + 120, y + 30 + Math.sin(K.time * 12) * 10);
+      } else {
+        K.draw.text('Wait for the green glow...', v.w / 2, y, { size: 38, color: '#cfe8ff', maxW: v.w - 60 });
+      }
+    }
+  },
+  finger(ctx, x, y) {
+    ctx.save(); ctx.translate(x, y); ctx.rotate(-0.4);
+    K.draw.capsule(-16, -70, 32, 80, ['#ffffff', '#ffe0cc', '#c8a090'], { depth: 0 });
+    K.draw.block(-34, -10, 68, 70, ['#ffffff', '#ffe0cc', '#c8a090'], { r: 26, depth: 0 });
+    ctx.restore();
+    ctx.globalAlpha = 0.6; ctx.beginPath(); ctx.arc(x - 14, y - 100, 30 + (K.time * 60) % 30, 0, TAU); ctx.lineWidth = 5; ctx.strokeStyle = '#ffffff'; ctx.stroke(); ctx.globalAlpha = 1;
+  },
+});
+
+K.scenes.add('over', {
+  music: 'orbitMenu',
+  enter(p) {
+    const v = K.view, run = this.run = p.run, s = run.s;
+    const prev = SAVE.best;
+    this.newBest = s.score > prev && s.score > 0;
+    if (s.score > prev) SAVE.best = s.score;
+    this.best = SAVE.best;
+    K.save.commit();
+    K.sdk.send('score', { value: s.score });
+    this.line = this.nearMiss(s, prev);
+    this.shown = { n: 0 }; this.pan = { s: 0 };
+    K.tween(this.shown, { n: s.score }, 1.0, K.Ease.outCubic, 0.3);
+    K.tween(this.pan, { s: 1 }, 0.5, K.Ease.outBack);
+    if (this.newBest) K.wait(1.0).then(() => {
+      K.audio.play('win'); K.haptic('success');
+      K.fx.burst(v.w / 2, v.h * 0.33, { screen: true, shape: 'star', colors: ['#ffe600', '#22ff88', '#ff3cc7', '#ffffff'], count: 46, speed: [300, 900], size: [10, 20] });
+    });
+    const cy = v => v.h * 0.4;
+    K.ui.button({ icon: 'home', color: 'blue', w: 120, h: 120, popIn: 0.35, place: v => ({ x: v.w / 2 - 210, y: cy(v) + 360 }), onTap: () => K.scenes.go('title') });
+    K.ui.button({ label: 'RETRY', icon: 'retry', color: 'green', w: 300, h: 120, key: 'action', pulse: true, popIn: 0.45,
+      place: v => ({ x: v.w / 2 + 70, y: cy(v) + 360 }), onTap: () => K.scenes.go('play') });
+    if (!s.continued) {
+      const cont = K.ui.button({ label: 'CONTINUE', icon: 'video', color: 'purple', w: 440, h: 110, popIn: 0.55, sub: 'respawn on your last planet',
+        place: v => ({ x: v.w / 2, y: cy(v) + 505 }),
+        onTap: async () => {
+          cont.enabled = false;
+          const r = await K.adBreak('rewarded');
+          if (r.granted) { K.audio.play('power'); K.scenes.go('play', { resume: run }); }
+          else { cont.label = 'NO AD'; }
+        } });
+    }
+  },
+  nearMiss(s, prev) {
+    if (s.score <= prev && prev - s.score <= Math.max(60, prev * 0.25)) return 'Only ' + (prev - s.score + 1) + ' points from your best!';
+    const wal = K.meta.wallet.get('dust');
+    const next = SKINS.filter(k => k.cost && !K.meta.unlocks.has(k.id)).sort((a, b) => a.cost - b.cost)[0];
+    if (next && wal < next.cost && next.cost - wal <= 60) return (next.cost - wal) + ' more stardust for ' + next.name + '!';
+    if (next && wal >= next.cost) return 'You can afford ' + next.name + '! Check CRITTERS';
+    const ms = SKINS.find(k => k.ms && !K.meta.unlocks.has(k.id));
+    if (ms && ms.ms.planets && s.reached < ms.ms.planets) return (ms.ms.planets - s.reached) + ' more planets to unlock ' + ms.name + '!';
+    if (s.reached % GAL_N >= GAL_N - 4) return 'Only ' + (GAL_N - s.reached % GAL_N) + ' planets from a new galaxy!';
+    if (ms) return ms.msText + ' to unlock ' + ms.name;
+    return 'Planet ' + s.reached + ' reached';
+  },
+  backdrop(ctx) { spaceBackdrop(ctx, this.run.s.galaxy, K.time * 20); },
+  render(ctx) {
+    const v = K.view; ctx.fillStyle = 'rgba(5,3,15,0.35)'; ctx.fillRect(-v.ox - 9999, -9999, 99999, 99999);
+    const sk = skinById(K.meta.unlocks.selected('skin', 'blip')), y = v.h * 0.4 - 360 + Math.sin(K.time * 2) * 10;
+    drawCritter(sk, v.w / 2, y, 56 * this.pan.s, { ctx, rot: Math.sin(K.time * 1.5) * 0.2, mood: this.newBest ? 'happy' : 'sad' });
+  },
+  hud(ctx) {
+    const v = K.view, cy = v.h * 0.4, s = this.run.s;
+    headerPills();
+    ctx.save(); ctx.translate(v.w / 2, cy); ctx.scale(this.pan.s, this.pan.s);
+    const title = s.cause === 'rock' ? 'CRASHED!' : s.cause === 'hole' ? 'SWALLOWED!' : 'LOST IN SPACE';
+    K.draw.panel(0, 0, 600, 520, { title, color: s.cause === 'hole' ? 'purple' : s.cause === 'rock' ? 'red' : 'blue' });
+    K.draw.label('SCORE', 0, -165, { size: 34, color: '#a8b0e0' });
+    K.draw.text(Math.round(this.shown.n).toLocaleString(), 0, -95, { size: 100, color: '#ffe600' });
+    K.draw.pill(0, 5, 'BEST ' + this.best.toLocaleString(), { icon: 'trophy', size: 32 });
+    if (this.newBest) { ctx.save(); ctx.translate(0, 80); ctx.rotate(Math.sin(K.time * 4) * 0.05); K.draw.text('NEW BEST!', 0, 0, { size: 56, color: '#22ff88' }); ctx.restore(); }
+    else K.draw.paragraph(this.line, 0, 80, 520, { size: 32, color: '#ffffff' });
+    const stats = [['PLANET', s.reached], ['PERFECTS', s.perfects], ['STARDUST', '+' + s.dustRun]];
+    stats.forEach(([l, n], i) => { const x = (i - 1) * 180; K.draw.label(l, x, 160, { size: 24, color: '#a8b0e0' }); K.draw.text(String(n), x, 202, { size: 42 }); });
+    ctx.restore();
+  },
+});
+
+/* ---- collection screens ---- */
+function backBtn() { return K.ui.button({ icon: 'arrowL', color: 'blue', w: 100, h: 100, place: v => ({ x: 70 + v.safe.left, y: 70 + v.safe.top }), onTap: () => K.scenes.go('title') }); }
+
+K.scenes.add('skins', {
+  music: 'orbitMenu',
+  enter() {
+    backBtn();
+    K.ui.list({ items: SKINS, cols: 2, itemH: 310, gap: 20, frame: false, popIn: 0.1,
+      place: v => ({ x: v.w / 2, y: (200 + v.safe.top + v.h - 30) / 2, w: Math.min(v.w - 30, 680), h: v.h - 30 - (200 + v.safe.top) }),
+      drawItem: (ctx, k, i, x, y, w, h) => {
+        const own = K.meta.unlocks.has(k.id), sel = K.meta.unlocks.selected('skin', 'blip') === k.id;
+        K.draw.card(x, y, w, h, { selected: sel, fill: sel ? '#2a1f66' : K.THEME.paper, outline: sel ? 8 : 5 });
+        ctx.save(); if (!own) ctx.globalAlpha = 0.55;
+        for (let j = 1; j < 8; j++) { ctx.globalAlpha = (own ? 0.6 : 0.3) * (1 - j / 8); ctx.beginPath(); ctx.arc(x + w / 2 - j * 16, y + 125 + j * 7, 13 - j, 0, TAU); ctx.fillStyle = k.trail; ctx.fill(); }
+        ctx.globalAlpha = own ? 1 : 0.55;
+        drawCritter(k, x + w / 2 + 10, y + 120, 54, { ctx, mood: own ? 'happy' : 'blink', rot: 0.15, t: K.time + i });
+        ctx.restore();
+        K.draw.text(k.name, x + w / 2, y + 222, { size: 40, maxW: w - 30 });
+        if (sel) K.draw.text('SELECTED', x + w / 2, y + 272, { size: 28, color: '#22ff88', sw: 5 });
+        else if (own) K.draw.text('TAP TO USE', x + w / 2, y + 272, { size: 26, color: '#cfe8ff', sw: 5 });
+        else if (k.cost) { const can = K.meta.wallet.can('dust', k.cost); K.draw.pill(x + w / 2, y + 272, String(k.cost), { icon: 'star', iconColor: '#fff6b0', size: 28, color: can ? '#22ff88' : '#ff9ab0' }); }
+        else { K.draw.icon('lock', x + 40, y + 40, 40, '#a8b0e0'); K.draw.text(k.msText, x + w / 2, y + 272, { size: 24, color: '#ffcf6a', sw: 5, maxW: w - 24 }); }
+      },
+      onItem: k => {
+        if (K.meta.unlocks.has(k.id)) { K.meta.unlocks.select('skin', k.id); K.audio.play('capture'); K.save.commit(); return; }
+        if (k.cost) {
+          if (K.meta.wallet.spend('dust', k.cost)) { grantSkin(k.id); K.meta.unlocks.select('skin', k.id); K.haptic('success'); K.save.commit();
+            K.fx.burst(K.view.w / 2, K.view.h / 2, { screen: true, shape: 'star', colors: [k.col, '#ffe600', '#ffffff'], count: 36, speed: [300, 800] }); }
+          else { K.audio.play('error'); K.haptic('fail'); K.ui.toast('Need ' + (k.cost - K.meta.wallet.get('dust')) + ' more stardust', { icon: 'star', iconColor: '#fff6b0' }); }
+        } else { K.audio.play('error'); K.ui.toast(k.msText + ' to unlock', { icon: 'lock' }); }
+      } });
+  },
+  backdrop(ctx) { spaceBackdrop(ctx, 1, K.time * 25); },
+  hud() {
+    const v = K.view;
+    K.draw.text('CRITTERS', v.w / 2, 70 + v.safe.top, { size: 60, color: '#7ae8ff', maxW: v.w - 280 });
+    K.draw.text(ownedCount() + ' / ' + SKINS.length + ' collected', 40 + v.safe.left, 150 + v.safe.top, { size: 28, sw: 5, color: '#cfe8ff', align: 'left' });
+    K.draw.pill(v.w - 130 - v.safe.right, 150 + v.safe.top, K.fmt(K.meta.wallet.get('dust')), { icon: 'star', iconColor: '#fff6b0', size: 32, minW: 170 });
+  },
+});
+
+K.scenes.add('awards', {
+  music: 'orbitMenu',
+  enter() {
+    backBtn();
+    K.ui.list({ items: ACH, itemH: 118, gap: 14, frame: false, popIn: 0.1,
+      place: v => ({ x: v.w / 2, y: (200 + v.safe.top + v.h - 30) / 2, w: Math.min(v.w - 30, 680), h: v.h - 30 - (200 + v.safe.top) }),
+      drawItem: (ctx, a, i, x, y, w, h) => {
+        const got = !!SAVE.ach[a.id];
+        K.draw.card(x, y, w, h, { fill: got ? '#2a1f66' : '#141030' });
+        K.draw.blob(x + 62, y + h / 2, 40, got ? 'yellow' : 'gray', { glow: got });
+        K.draw.icon(got ? 'trophy' : 'lock', x + 62, y + h / 2, 44, got ? '#fffbb0' : '#3a4070');
+        K.draw.label(a.name, x + 125, y + h / 2 - 20, { size: 34, align: 'left', color: got ? '#ffffff' : '#8088c0', maxW: w - 150 });
+        K.draw.label(a.desc, x + 125, y + h / 2 + 22, { size: 24, align: 'left', color: got ? '#cfe8ff' : '#5f669a', maxW: w - 150 });
+        if (got) K.draw.icon('check', x + w - 44, y + h / 2, 44, '#22ff88');
+      } });
+  },
+  backdrop(ctx) { spaceBackdrop(ctx, 2, K.time * 25); },
+  hud() {
+    const v = K.view, n = ACH.filter(a => SAVE.ach[a.id]).length;
+    K.draw.text('AWARDS', v.w / 2, 70 + v.safe.top, { size: 60, color: '#ffcf6a', maxW: v.w - 380 });
+    K.draw.text(n + ' / ' + ACH.length + ' earned  ·  best combo x' + (SAVE.stats.bestCombo + 1), v.w / 2, 140 + v.safe.top, { size: 28, sw: 5, color: '#cfe8ff', maxW: v.w - 220 });
+  },
+});
+
+/* ---- title card (tools/cards.py renders ?card to thumb.jpg) ---- */
+K.scenes.add('card', {
+  music: null,
+  backdrop(ctx) {
+    const v = K.view;
+    spaceBackdrop(ctx, 0, 300);
+    const g = ctx.createRadialGradient(v.w / 2, v.h * 0.55, 30, v.w / 2, v.h * 0.55, v.fullW * 0.6);
+    g.addColorStop(0, 'rgba(180,76,255,0.35)'); g.addColorStop(1, 'rgba(180,76,255,0)');
+    ctx.fillStyle = g; ctx.fillRect(-v.ox, -v.oy, v.fullW, v.fullH);
+  },
+  render(ctx) {
+    const v = K.view, t = 1.3, H = v.h;
+    const P1 = { r0: 150, style: 0, col: 1, g: 0, ring: true, pulse: 0, spin: 0 }, P2 = { r0: 110, style: 1, col: 2, g: 0, ring: false, pulse: 0, spin: 0 };
+    const P3 = { r0: 80, style: 3, col: 0, g: 1, ring: false, pulse: 0, spin: 0 }, P4 = { r0: 70, style: 2, col: 3, g: 2, ring: false, pulse: 0, spin: 0 };
+    const a = { x: v.w * 0.1, y: H * 0.98 }, b = { x: v.w * 0.92, y: H * 0.64 };
+    P3.y = H * 0.62; drawPlanet(ctx, P3, t, -v.ox + 120);
+    P4.y = H * 0.3; drawPlanet(ctx, P4, t, v.w + v.ox - 120);
+    drawHole(ctx, { x: -v.ox + 190, y: H * 0.36 }, 1.1);
+    // capture window glow on the target
+    ctx.save(); ctx.shadowColor = '#22ff88'; ctx.shadowBlur = 40; ctx.lineWidth = 14; ctx.strokeStyle = '#22ff88';
+    ctx.beginPath(); ctx.arc(b.x, b.y, 185, 0, TAU); ctx.stroke(); ctx.restore();
+    K.draw.glow(b.x, b.y, 300, '#22ff88', 0.3);
+    P1.y = a.y; drawPlanet(ctx, P1, t, a.x);
+    P2.y = b.y; drawPlanet(ctx, P2, t, b.x);
+    // orbit window arc on the launch planet
+    ctx.save(); ctx.lineCap = 'round'; ctx.shadowColor = '#22ff88'; ctx.shadowBlur = 18; ctx.lineWidth = 16; ctx.strokeStyle = 'rgba(34,255,136,0.7)';
+    ctx.beginPath(); ctx.arc(a.x, a.y, 200, -1.25, -0.55); ctx.stroke(); ctx.lineWidth = 10; ctx.strokeStyle = '#ffe600'; ctx.beginPath(); ctx.arc(a.x, a.y, 200, -0.98, -0.82); ctx.stroke(); ctx.restore();
+    // dotted path & hero mid-flight
+    const hx = M.lerp(a.x + 110, b.x - 120, 0.45), hy = M.lerp(a.y - 170, b.y + 60, 0.45);
+    const pts = []; for (let i = 0; i <= 7; i++) { const f = i / 7; pts.push(M.lerp(hx + 70, b.x - 75, f), M.lerp(hy - 40, b.y + 25, f)); }
+    K.draw.dots(pts, '#22ff88', 13);
+    const ang = Math.atan2(b.y - a.y, b.x - a.x);
+    for (let i = 0; i < 9; i++) { const f = i / 9; ctx.globalAlpha = 0.85 * (1 - f); ctx.beginPath(); ctx.arc(hx - Math.cos(ang) * (40 + i * 26), hy - Math.sin(ang) * (40 + i * 26), 30 - i * 2.6, 0, TAU); ctx.fillStyle = i % 2 ? '#7ae8ff' : '#ffffff'; ctx.fill(); }
+    ctx.globalAlpha = 1;
+    for (let i = 0; i < 5; i++) { const o = (i - 2) * 26; K.draw.line([hx - Math.cos(ang) * 120 - Math.sin(ang) * o, hy - Math.sin(ang) * 120 + Math.cos(ang) * o, hx - Math.cos(ang) * (220 + i * 20) - Math.sin(ang) * o, hy - Math.sin(ang) * (220 + i * 20) + Math.cos(ang) * o], 'rgba(255,255,255,0.7)', 5, { outline: 0 }); }
+    drawCritter(SKINS[0], hx, hy, 88, { ctx, rot: ang + Math.PI / 2, sx: 0.85, sy: 1.2, mood: 'happy', look: { x: 0, y: -1 }, t: 0.4 });
+    // stardust + rocks
+    const ds = dustSprite();
+    [[0.62, 0.42], [0.7, 0.36], [0.06, 0.45], [0.9, 0.78], [0.45, 0.62]].forEach(([fx, fy], i) => K.draw.drawSprite(ds, -v.ox + fx * v.fullW, fy * H, { scale: 1.5, rot: i * 0.4 }));
+    K.draw.drawSprite(rockSprite(0, 32), v.w + v.ox - 110, H * 0.86, { scale: 1.6, rot: 0.5 });
+    K.draw.drawSprite(rockSprite(1, 28), -v.ox + 60, H * 0.95, { scale: 1.3, rot: 1.2 });
+    K.draw.drawSprite(rockSprite(2, 24), v.w + v.ox - 30, H * 0.66, { scale: 1.2, rot: 2.2 });
+  },
+  hud(ctx) {
+    const v = K.view;
+    ctx.save(); ctx.translate(v.w / 2, v.h * 0.2); ctx.rotate(-0.07);
+    K.draw.text('ORBIT', 0, -95, { size: 230, color: '#7ae8ff', sw: 18 });
+    K.draw.text('HOP!', 40, 110, { size: 250, color: '#ff7ad1', sw: 18 });
+    ctx.restore();
+  },
+});
+
+K.boot(/[?&]card\b/.test(location.search) ? 'card' : 'title');
 </script>
 </body>
 </html>

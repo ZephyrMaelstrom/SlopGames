@@ -147,7 +147,7 @@ const MANIFEST = {
 /* §3 GAME */
 // 3a. Sim — pure, deterministic (state.rng), emits events
 // 3b. Presentation — drawing helpers, juice
-// 3c. Scenes — title → play → over (+ any menus), then:
+// 3c. Scenes — title → play → over (+ any menus) + 'card' (title-card key art), then:
 K.boot('title');
 </script>
 </body>
@@ -177,6 +177,7 @@ ${(sel.extra || '').trim() ? '\n## Extra requirements\n' + sel.extra.trim() + '\
 # QUALITY BAR (all required)
 - Content depth: a real game, not a toy. Multiple enemy/obstacle/item types, a difficulty ramp, and at least 5 minutes of varied play before it repeats.
 - Juice: every player action has an sfx AND a visual response; scoring shows K.fx.text + a counter bounce; hits/fails use K.fx.shake + flash (+ hitstop on big hits); menus pop in.
+- Title card: a 'card' scene with full-bleed key art (hero mid-action, game elements, big logo, no buttons) as described in the kernel reference — the platform renders it as the game's thumbnail.
 - Flow: title → play → game over with score count-up, best score, and instant retry (≤ 1 tap). Pause via K.ui.pauseButton(); onQuit returns to title.
 - Mobile-first: thumb-reachable controls, HUD inside K.view.safe, readable at phone size.
 - Performance: 60 fps on a mid phone; use K.draw.blobS / K.draw.sprite for anything drawn more than ~50 times per frame.

@@ -38,8 +38,10 @@
   const emojiFor = g => GENRE_EMOJI[g.genre] || ({ showcase: '🧪', draft: '📝' })[g.genre] || '🎮';
   const GENRE_LABEL = Object.fromEntries((window.SGPrompt ? SGPrompt.GENRES : []).map(g => [g.id, g.label]));
   const genreLabel = g => GENRE_LABEL[g.genre] || g.genre || '';
-  const isListed = g => g.source === 'repo' && g.status !== 'lab';   // public "live" games
+  const isListed = g => g.source === 'repo' && g.status !== 'lab' && g.status !== 'draft';   // public "live" games
   const isLabBuild = g => g.source === 'repo' && g.status === 'lab';
+  const isRepoDraft = g => g.source === 'repo' && g.status === 'draft';      // committed, not listed yet: shows in My drafts on every device
+  const isMine = g => g.source === 'draft' || isRepoDraft(g);
 
   /* ---------- toast / modal ---------- */
   function toast(msg, kind = '') {
@@ -63,26 +65,31 @@
     return `<div class="ph ${cls}" style="background:linear-gradient(140deg, ${c}, #1b1b3a)" aria-hidden="true">${emojiFor(g)}</div>`;
   }
   function card(g) {
-    const badges = [g.source === 'draft' ? '<span class="badge draft">draft</span>' : '', g.status === 'lab' ? '<span class="badge lab">lab</span>' : ''].join('');
+    const badges = [isMine(g) ? '<span class="badge draft">draft</span>' : '', g.status === 'lab' ? '<span class="badge lab">lab</span>' : ''].join('');
     return `<a class="card" data-id="${esc(g.id)}" href="#/g/${encodeURIComponent(g.id)}" title="${esc(g.description || '')}">
       <div class="thumb">${thumb(g)}<div class="badges">${badges}</div></div>
       <div class="meta"><b>${esc(g.title)}</b><span>${emojiFor(g)} ${esc(genreLabel(g))}</span></div></a>`;
   }
-  /* Auto-thumbnails: drafts saved without a thumbnail get one by booting the game in a hidden frame
-     and snapshotting its title screen. Runs one draft at a time; each draft is tried once per page load. */
+  /* Auto-thumbnails: drafts saved without a thumbnail get one by booting the game in a hidden frame and
+     snapshotting it — its 'card' key-art scene at 4:3 when it has one (window.SG_CARD), else its title screen.
+     Runs one draft at a time; each draft is tried once per page load. */
   const thumbTried = new Set();
   let thumbBusy = false;
   async function captureThumb(d) {
     const f = makeFrame();
-    f.style.cssText = 'position:fixed;right:0;bottom:0;width:390px;height:844px;opacity:0;pointer-events:none;z-index:-1;border:0';
+    let html = await DB.playableHTML(Object.assign({ source: 'draft' }, d), null).catch(() => null);
+    if (!html) return null;
+    const card = /K\.scenes\.add\(\s*['"`]card['"`]/.test(html);
+    if (card) html = html.replace(/<body[^>]*>/i, m => m + '<script>window.SG_CARD = true;</script>');
+    f.style.cssText = `position:fixed;right:0;bottom:0;width:${card ? 800 : 390}px;height:${card ? 600 : 844}px;opacity:0;pointer-events:none;z-index:-1;border:0`;
     document.body.appendChild(f);
     let h = null;
     try {
       const ready = new Promise(res => { h = new GameHost(f, { gameId: d.id, container: document.body, muted: true, onState: s => s.ready && res() }); });
-      f.srcdoc = await DB.playableHTML(Object.assign({ source: 'draft' }, d), null);
+      f.srcdoc = html;
       await Promise.race([ready, new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 8000))]);
       await new Promise(r => setTimeout(r, 1200));                      // let the title screen animate in
-      return await h.snapshot(600);
+      return await h.snapshot(card ? 800 : 600);
     } catch (e) { return null; }
     finally { if (h) h.destroy(); f.remove(); }
   }
@@ -109,7 +116,7 @@
     const counts = {};
     live.forEach(g => (g.tags || []).forEach(t => counts[t] = (counts[t] || 0) + 1));
     const tags = Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 18);
-    const drafts = all.filter(g => g.source === 'draft').length;
+    const drafts = all.filter(isMine).length;
     $('#side').innerHTML = `
       <a href="#/" data-r="home"><span class="ico">${ICON.home}</span>Home<span class="count">${live.length}</span></a>
       <a href="#/create" data-r="create"><span class="ico">${ICON.spark}</span>Create with AI</a>
@@ -137,7 +144,7 @@
     const all = await DB.all();
     const live = all.filter(isListed);
     const labBuilds = all.filter(isLabBuild);
-    const drafts = all.filter(g => g.source === 'draft');
+    const drafts = all.filter(isMine);
     const feat = live.find(g => g.featured) || live[0];
     const byGenre = {};
     live.forEach(g => (byGenre[g.genre] = byGenre[g.genre] || []).push(g));
@@ -165,9 +172,9 @@
   const tagView = t => listView(`${emojiFor({ genre: t })} ${esc(t)}`, g => isListed(g) && ((g.tags || []).includes(t) || g.genre === t));
   const searchView = q => { q = q.toLowerCase(); return listView(`Search: “${esc(q)}”`, g => [g.title, g.description, g.genre, ...(g.tags || [])].join(' ').toLowerCase().includes(q)); };
   async function draftsView() {
-    const d = (await DB.all()).filter(g => g.source === 'draft');
-    view.innerHTML = `<div class="sec-head"><h1>📝 My drafts</h1><span class="muted">Stored in this browser only · publish from the Lab</span><a class="btn pri" style="margin-left:auto" href="#/create">${ICON.spark} New</a></div>
-      ${d.length ? grid(d) : `<div class="empty"><h2 style="justify-content:center">No drafts yet</h2><p>Generate a prompt on the Create page, then paste the code on the Import page and it lands here.</p><div class="row" style="justify-content:center"><a class="btn pri" href="#/create">Create a game</a><a class="btn" href="#/import">Import code</a></div></div>`}`;
+    const all = await DB.all(), d = all.filter(g => g.source === 'draft'), rd = all.filter(isRepoDraft);
+    view.innerHTML = `<div class="sec-head"><h1>📝 My drafts</h1><span class="muted">${rd.length ? rd.length + ' in the repo (any device)' + (d.length ? ' · ' + d.length + ' in this browser' : '') : 'Stored in this browser only'} · make them live from the Lab</span><a class="btn pri" style="margin-left:auto" href="#/create">${ICON.spark} New</a></div>
+      ${d.length || rd.length ? grid([...d, ...rd]) : `<div class="empty"><h2 style="justify-content:center">No drafts yet</h2><p>Generate a prompt on the Create page, then paste the code on the Import page and it lands here.</p><div class="row" style="justify-content:center"><a class="btn pri" href="#/create">Create a game</a><a class="btn" href="#/import">Import code</a></div></div>`}`;
     if (d.some(x => !x.thumb)) backfillThumbs();
   }
 
@@ -186,7 +193,7 @@
     if (!g) { view.innerHTML = `<div class="empty"><h2 style="justify-content:center">Game not found</h2><a class="btn" href="#/">Back home</a></div>`; return; }
     const portrait = (g.orientation || 'portrait') !== 'landscape';
     const all = await DB.all();
-    const more = all.filter(x => x.id !== g.id && x.source === 'repo').slice(0, 8);
+    const more = all.filter(x => x.id !== g.id && isListed(x)).slice(0, 8);
     const scores = Scores.get(g.id), st = Stats.get(g.id);
     view.innerHTML = `
       <div class="gp">
@@ -284,6 +291,10 @@
             <div class="field" style="margin-bottom:10px"><label>Genre</label><select id="d-genre">${(window.SGPrompt ? SGPrompt.GENRES : []).map(x => opt(x.id, `${x.emoji} ${x.label}`, g.genre)).join('')}</select></div>
             <div class="row"><button class="btn sm pri" id="d-pub">${ICON.up} Publish</button><button class="btn sm" id="d-thumb">${ICON.cam} Set thumbnail</button><button class="btn sm warn" id="d-del">${ICON.trash}</button></div>
             ${g.thumb ? `<img src="${esc(g.thumb)}" style="width:100%;border-radius:12px;margin-top:12px" alt="">` : ''}</div>`
+          : isRepoDraft(g) ? `<div class="box"><h3>Draft</h3><p class="muted small" style="margin-top:0">Committed to the repo but not listed on the site yet. Test it here, then make it live.</p>
+            <div class="toggles" style="margin-bottom:10px"><label class="tg"><input type="checkbox" id="r-feat"> Featured</label></div>
+            <div class="row"><button class="btn sm pri" id="r-live">${ICON.up} Make live</button><a class="btn sm" href="#/g/${esc(g.id)}">▶ Game page</a></div>
+            <p class="small mono" id="r-step" style="color:var(--accent2)"></p></div>`
           : `<a class="btn" href="#/g/${esc(g.id)}">▶ Open game page</a>`}
         </div>
         <div class="lab-main">
@@ -368,6 +379,13 @@
       $('#d-thumb').onclick = async () => { const d = host && await host.snapshot(600); if (!d) return toast('Snapshot failed', 'bad'); const dr = await DB.drafts.get(g.id); dr.thumb = d; await DB.drafts.put(dr); toast('Thumbnail saved', 'good'); labView(g.id); };
       $('#d-pub').onclick = () => publishDialog(g);
     }
+    if (isRepoDraft(g)) $('#r-live').onclick = async e => {
+      if (!DB.gh.cfg.token) return toast('Add a GitHub token in Settings first.', 'bad');
+      if (!confirm(`List “${g.title}” as a live game?`)) return;
+      e.target.disabled = true;
+      try { await DB.setStatus(g.id, 'live', { featured: $('#r-feat').checked }, s => { $('#r-step').textContent = s; }); toast('Live! Pages will update in about a minute.', 'good'); }
+      catch (err) { $('#r-step').textContent = '✘ ' + err.message; e.target.disabled = false; }
+    };
     await mount();
   }
 

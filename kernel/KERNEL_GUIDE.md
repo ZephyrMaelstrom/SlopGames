@@ -11,6 +11,9 @@ A game is ONE `index.html` with three `<script>` blocks: **§1 MANIFEST**, **§2
 6. HUD respects `K.view.safe` (notches). Logical coordinates: the design short axis is guaranteed (720 for portrait 720×1280); the long axis expands. Use `K.view.w/h`, never pixel sizes.
 7. Flow: title → play → game over (score count-up, best, retry in ≤1 tap). Gameplay scenes set `gameplay: true, pausable: true`, add `K.ui.pauseButton()` and define `onQuit()`.
 
+## Title card (required — the platform's thumbnail)
+Add `K.scenes.add('card', { music: null, backdrop(ctx) {…}, hud(ctx) {…} })`: finished key art, no widgets or input. When the platform makes a thumbnail it boots this scene instead of `title` (kernel: `window.SG_CARD` or `?card` in the URL) in a 4:3 frame and saves it after ~1.5 s. Paint the WHOLE canvas, gutters included: `x ∈ [-K.view.ox, K.view.w + K.view.ox]`, `y ∈ [-K.view.oy, K.view.h + K.view.oy]` (a portrait game in 4:3 is 900×1280 logical with wide gutters, so use `K.view.fullW/fullH`). Compose like a store icon: hero mid-action large on a strong diagonal, 2–4 enemies/pickups from the game, layered background, the logo big (≈ 15–22 % of the height, outlined, slight tilt). Deterministic (seeded `K.rng`, fixed time), readable as a 300 px thumbnail. Reuse the game's own drawing functions.
+
 ## MANIFEST
 ```js
 const MANIFEST = {
